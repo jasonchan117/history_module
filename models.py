@@ -19,21 +19,7 @@ from libs.pspnet import PSPNet
 import torch.distributions as tdist
 import copy
 from knn_cuda import KNN
-psp_models = {
-    'resnet18': lambda: PSPNet(sizes=(1, 2, 3, 6), psp_size=512, deep_features_size=256, backend='resnet18'),
-}
 
-class ModifiedResnet(nn.Module):
-
-    def __init__(self):
-        super(ModifiedResnet, self).__init__()
-
-        self.model = psp_models['resnet18'.lower()]()
-        self.model = nn.DataParallel(self.model)
-
-    def forward(self, x):
-        x = self.model(x)
-        return x
 
 
 class Pseudo3DConv(nn.Module):
@@ -45,7 +31,7 @@ class Pseudo3DConv(nn.Module):
         self.conv2 = torch.nn.Conv1d(64, 128,1)
         self.pconv1 = torch.nn.Conv1d(3, 64, 1)
         self.pconv2 = torch.nn.Conv1d(64, 128, 1)
-        self.mp = nn.MaxPool1d(self.opt.topk)
+        self.mp = torch.nn.MaxPool1d(self.opt.topk)
         self.sm = torch.nn.Softmax(dim = 1)
         self.final_conv = torch.nn.Conv1d(256, 128, 1)
     def forward(self, img_feat, cloud):
@@ -67,7 +53,7 @@ class Pseudo3DConv(nn.Module):
 
             selected_feat = selected_feat.transpose(2, 1).contiguous()#(1, 32, 8)
             selected_feat = self.conv1(selected_feat)# (1, 64, 8)
-            selected_feat = self.conv2(selected_feat)# (1, 128, 8)
+            selected_feat = self.conv2(F.leaky_relu(selected_feat))# (1, 128, 8)
             weight = weight.view(1, self.opt.topk, 1).repeat(1, 1, 128).contiguous() #(1, 8, 128)
             weight = weight.transpose(2, 1).contiguous() #(1, 128, 8)
             selected_feat = selected_feat * weight
@@ -81,20 +67,38 @@ class Pseudo3DConv(nn.Module):
 
         cloud = cloud.transpose(2, 1).contiguous() #(1, 3, numpt)
         cloud = self.pconv1(cloud)
-        cloud = self.pconv2(cloud) #(1, 128, numpt)
+        cloud = self.pconv2(F.leaky_relu(cloud)) #(1, 128, numpt)
         suround_feat = suround_feat.transpose(2, 1).contiguous() #(1, 128, numpt)
         final = torch.cat((suround_feat, cloud), dim = 1) #(1, 256, numpt)
-        final = self.final_conv(final) #(1, 128, numpt)
+        final = self.final_conv(F.leaky_relu(final)) #(1, 128, numpt)
         return final
+psp_models = {
+    'resnet18': lambda: PSPNet(sizes=(1, 2, 3, 6), psp_size=512, deep_features_size=256, backend='resnet18'),
+}
 
+class ModifiedResnet(nn.Module):
+
+    def __init__(self):
+        super(ModifiedResnet, self).__init__()
+
+        self.model = psp_models['resnet18'.lower()]()
+        self.model = nn.DataParallel(self.model)
+
+    def forward(self, x):
+        x = self.model(x)
+        return x
 class KeypointGenerator(nn.Module):
     def __init__(self, opt):
         super(KeypointGenerator, self).__init__()
         self.opt = opt
         self.cnn = self.ModifiedResnet()
         self.fusion = Pseudo3DConv(opt)
+        self.sm = torch.nn.Softmax(dim = 1)
+        self.conv_dis1 = torch.nn.Conv1d(128, 64, 3, padding = 1)
+        self.conv_dis2 = torch.nn.Conv1d(64, 32, 1)
+        self.conv_dis3 = torch.nn.Conv1d(32, 1, 1)
     def forward(self, img, cloud, choose, t):
-
+        # t: (1, 3)
         img = self.cnn(img)
         bs, di, _, _ = img.size() # (1, 32, h, w)
         img = img.view(bs, di, -1)
@@ -102,7 +106,14 @@ class KeypointGenerator(nn.Module):
         img = torch.gather(img, 2, choose).contiguous() # (1, 32, num_pt)
 
         fused_feat = self.fusion(img, cloud) # (1, 128, numpt)
+        dis_center = (t * -1.).view(1, 1, 3).repeat(1, self.opt.num_pt, 1).contiguous()#(1, numpt, 3)
+        dis_center = self.sm(torch.norm(cloud - dis_center, 2).view(1, self.opt.num_pt).contiguous()) #(1, numpt) the farther the point from the center the higher weight
+        center_weight = dis_center.unsqueeze(1).repeat(1, 128, 1).contiguous() #(1, 128, numpt)
 
+        dis_pre = self.conv_dis3(F.leaky_relu(self.conv_dis2(F.leaky_relu(self.conv_dis1(fused_feat))))).view(1, self.opt.num_pt).contiguous() #(1, numpt)
+
+        fused_feat *= center_weight #(1, 128, numpt)
+        
 
 
 
