@@ -39,6 +39,7 @@ parser.add_argument('--ccd', action = 'store_true', help = 'Use skeleton merger 
 parser.add_argument('--tfb', action = 'store_true', help = 'Use TF-Blender or not.')
 parser.add_argument('--memory_size', default=0, type = int)
 parser.add_argument('--tfb_thres', default = 0.7, type = float, help = 'The threshold to determine whether the relation to be set to 0 or not.')
+parser.add_argument('--topk', default = 8 , type = int, help = 'The topk value considered in feature fusion.')
 parser.add_argument('--score', default= np.Inf, type = float)
 opt = parser.parse_args()
 
@@ -49,8 +50,12 @@ traindataset = Dataset(opt, length = 5000, mode = 'train')
 traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers = 0)
 # testdataset = Dataset(opt, length = 500, mode = 'test')
 # testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=True, num_workers = 0)
-for i, data in enumerate(traindataloader, 0):
-    fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose  = data
-    print('Epoch:', i + 1)
-    fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda()
-    print(fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
+optimizer = optim.Adam(model.parameters(), lr = opt.lr)
+for epoch in range(opt.begin, opt.epoch):
+    model.train()
+
+    for i, data in enumerate(traindataloader, 0):
+        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose  = data
+        print('Epoch:', i + 1)
+        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda()
+        print(fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)

@@ -87,7 +87,7 @@ class Dataset(data.Dataset):
         pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
         cloud = np.concatenate((-pt0, -pt1, pt2), axis=1)
         cloud = cloud @ camera_r.T + camera_t
-        return cloud / 100. , choose
+        return cloud , choose
     def __getitem__(self, index):
         with tf.device('/cpu:0'):
             while(True):
@@ -113,8 +113,8 @@ class Dataset(data.Dataset):
                             if len(bbox_frames[in_cate]) < self.ms + 2:
                                 flag = 1
                                 break
-                            choose_frame = random.sample(range(24), 2)
 
+                            choose_frame = random.sample(range(24), 2)
                             if choose_frame[0] >= choose_frame[1]:
                                 continue
                             if choose_frame[0] not in bbox_frames[in_cate] or choose_frame[1] not in bbox_frames[in_cate]:
