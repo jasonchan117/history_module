@@ -44,7 +44,7 @@ class Pseudo3DConv(nn.Module):
         self.conv1 = torch.nn.Conv1d(32, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128,1)
         self.pconv1 = torch.nn.Conv1d(3, 64, 1)
-        self.pconv2 = torch.nn.Conv1d(3, 128, 1)
+        self.pconv2 = torch.nn.Conv1d(64, 128, 1)
         self.mp = nn.MaxPool1d(self.opt.topk)
         self.sm = torch.nn.Softmax(dim = 1)
         self.final_conv = torch.nn.Conv1d(256, 128, 1)
@@ -102,7 +102,7 @@ class KeypointGenerator(nn.Module):
         img = torch.gather(img, 2, choose).contiguous() # (1, 32, num_pt)
 
         fused_feat = self.fusion(img, cloud) # (1, 128, numpt)
-        
+
 
 
 
