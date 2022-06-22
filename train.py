@@ -55,7 +55,9 @@ for epoch in range(opt.begin, opt.epoch):
     model.train()
 
     for i, data in enumerate(traindataloader, 0):
-        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose  = data
+        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose  = data
         print('Epoch:', i + 1)
-        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda()
-        print(fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
+        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t , to_cloud, to_choose = fr_seg.cuda(), fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_seg.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda()
+        # print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
+        fr_keys, fr_dis_pre, fr_dis_g, fr_seg_pre = model(fr_seg, fr_frame, fr_cloud, fr_choose, fr_t)
+        to_keys, to_dis_pre, fr_dis_g, to_seg_pre = model(to_seg, to_frame, to_cloud, to_choose, to_t)
