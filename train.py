@@ -18,10 +18,14 @@ import cv2
 from torch.autograd import Variable
 from dataset.movi_loader import Dataset
 from models import KeypointGenerator
+from libs.network import KeyNet
 from libs.loss import Loss
+import tensorflow as tf
+import tensorflow_datasets as tfds
 import warnings
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack]')
 parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
 parser.add_argument('--dataset_root', type=str, default = '', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
@@ -32,7 +36,7 @@ parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
 parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
 parser.add_argument('--lr', default=0.0001, help='learning rate', type = float)
 parser.add_argument('--occlude', action= 'store_true')
-parser.add_argument('--eval_fre', default=5, type = int)
+parser.add_argument('--eval_fre', default=1, type = int)
 parser.add_argument('--epoch', default=100, type = int)
 parser.add_argument('--begin',default=0, type=int)
 parser.add_argument('--ccd', action = 'store_true', help = 'Use skeleton merger to compute the CCD loss.')
@@ -42,22 +46,78 @@ parser.add_argument('--tfb_thres', default = 0.7, type = float, help = 'The thre
 parser.add_argument('--topk', default = 8 , type = int, help = 'The topk value considered in feature fusion.')
 parser.add_argument('--score', default= np.Inf, type = float)
 opt = parser.parse_args()
+cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 
-model = KeypointGenerator(opt)
+models = {'6pack':KeyNet(opt.num_pt, opt.num_kp)}
+model = models[opt.model]
 model.cuda()
 
-traindataset = Dataset(opt, length = 5000, mode = 'train')
-traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers = 0)
-# testdataset = Dataset(opt, length = 500, mode = 'test')
-# testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=True, num_workers = 0)
-optimizer = optim.Adam(model.parameters(), lr = opt.lr)
-for epoch in range(opt.begin, opt.epoch):
-    model.train()
 
+optimizer = optim.Adam(model.parameters(), lr = opt.lr)
+criterion = Loss(opt.num_kp)
+best_test = np.Inf
+
+for epoch in range(opt.begin, opt.epoch):
+
+    with tf.device('/cpu:0'):
+        ds = tfds.load("movi_e", data_dir="gs://kubric-public/tfds", shuffle_files=True)
+        ds_train = iter(tfds.as_numpy(ds['train']))
+
+
+    traindataset = Dataset(opt, length=5000, mode='train', ds=ds_train)
+    traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=0)
+
+    model.train()
+    train_dis_avg = 0.0
+    train_count = 0
+
+    optimizer.zero_grad()
     for i, data in enumerate(traindataloader, 0):
-        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose  = data
-        print('Epoch:', i + 1)
-        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t , to_cloud, to_choose = fr_seg.cuda(), fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_seg.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda()
-        # print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
-        fr_keys, fr_dis_pre, fr_dis_g, fr_seg_pre = model(fr_seg, fr_frame, fr_cloud, fr_choose, fr_t)
-        to_keys, to_dis_pre, fr_dis_g, to_seg_pre = model(to_seg, to_frame, to_cloud, to_choose, to_t)
+        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
+        print('Epoch:', epoch + 1 , 'batch:', i + 1)
+        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_seg.cuda(), fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_seg.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+        #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
+
+        kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+        kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+        try:
+            loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
+        except:
+            print('loss bugs')
+            continue
+        loss.backward()
+
+        train_dis_avg += loss.item()
+        train_count += 1
+
+        if train_count != 0 and train_count % 8 ==0:
+            optimizer.step()
+            optimizer.zero_grad()
+            print(train_count, float(train_dis_avg) / 8.0)
+            train_dis_avg = 0.0
+        if train_count != 0 and train_count % 100 == 0:
+            torch.save(model.state_dict(), '{0}/model_current_{1}.pth'.format(opt.outf, cates[opt.category]))
+
+    if (epoch + 1) % opt.eval_fre == 0:
+        with tf.device('/cpu:0'):
+            ds_test = iter(tfds.as_numpy(ds['test']))
+        testdataset = Dataset(opt, length=500, mode='test', ds=ds_test)
+        testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=True, num_workers=0)
+
+        optimizer.zero_grad()
+        model.eval()
+        score = []
+        for j, data in enumerate(testdataloader, 0):
+            fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = data
+            fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_seg.cuda(), fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_seg.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+            kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+            kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+            _, item_score = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
+
+            print(item_score)
+            score.append(item_score)
+        test_dis = np.mean(np.array(score))
+        if test_dis < best_test:
+            best_test = test_dis
+            torch.save(model.state_dict(), '{0}/model_{1}_{2}_{3}.pth'.format(opt.outf, epoch, test_dis, cates[opt.category]))
+            print(epoch, '>>>>>>>>----------BEST TEST MODEL SAVED---------<<<<<<<<')

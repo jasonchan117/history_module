@@ -29,11 +29,15 @@ class Pseudo3DConv(nn.Module):
         self.knn = KNN(self.opt.topk)
         self.conv1 = torch.nn.Conv1d(32, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128,1)
+        self.psconv1 = torch.nn.Conv1d(128, 256, 1)
+        self.psconv2 = torch.nn.Conv1d(256, 128, 1)
         self.pconv1 = torch.nn.Conv1d(3, 64, 1)
         self.pconv2 = torch.nn.Conv1d(64, 128, 1)
         self.mp = torch.nn.MaxPool1d(self.opt.topk)
         self.sm = torch.nn.Softmax(dim = 1)
-        self.final_conv = torch.nn.Conv1d(256, 128, 1)
+        self.final_conv1 = torch.nn.Conv1d(256, 128, 1)
+        self.final_conv2 = torch.nn.Conv1d(256, 128, 1)
+        self.final_conv = torch.nn.Conv1d(416, 32, 1)
     def forward(self, img_feat, cloud):
         # img_feat:(1, 32, numpt), cloud:(1, numpt, 3)
         bs, di, _ = img_feat.size() # (1, 32, numpt)
@@ -45,8 +49,14 @@ class Pseudo3DConv(nn.Module):
         inds = inds.transpose(2, 1).contiguous() #(1, numpt, 8)
         img_feat = img_feat.transpose(2, 1) #(1, numpt, 32)
         cloud = cloud.transpose(2, 1).contiguous() #(1, numpt, 3)
+        cloud_feat = cloud.transpose(2, 1).contiguous() #(1, 3, numpt)
+        cloud_feat = self.pconv1(cloud_feat)
+        cloud_feat = self.pconv2(F.leaky_relu(cloud_feat)) #(1, 128, numpt)
+        cloud_feat = cloud_feat.transpose(2, 1).contiguous() #(1, numpt, 128)
         for i, item in enumerate(inds[0]): # 1000
             selected_feat = torch.index_select(img_feat, 1, item) #(1, 8, 32)
+            selected_feat_point = torch.index_select(cloud_feat, 1, item) #(1, 8, 128)
+            selected_feat_point = selected_feat_point.transpose(2, 1).contiguous() #(1, 128, 8)
             selected_points = torch.index_select(cloud, 1, item) #(1, 8, 3)
             current_point = cloud[0][i].view(1, 1, 3).repeat(1, self.opt.topk, 1).contiguous() #(1, 8, 3)
             weight = self.sm(-1. * torch.norm(current_point - selected_points, dim = 2)) #(1, 8)
@@ -54,23 +64,32 @@ class Pseudo3DConv(nn.Module):
             selected_feat = selected_feat.transpose(2, 1).contiguous()#(1, 32, 8)
             selected_feat = self.conv1(selected_feat)# (1, 64, 8)
             selected_feat = self.conv2(F.leaky_relu(selected_feat))# (1, 128, 8)
+
+            selected_feat_point = self.psconv1(selected_feat_point)
+            selected_feat_point = self.psconv2(F.leaky_relu(selected_feat_point)) #(1, 128, 8)
+
+
             weight = weight.view(1, self.opt.topk, 1).repeat(1, 1, 128).contiguous() #(1, 8, 128)
             weight = weight.transpose(2, 1).contiguous() #(1, 128, 8)
+            selected_feat_point = selected_feat_point * weight
             selected_feat = selected_feat * weight
             selected_feat = self.mp(selected_feat).view(1, 128).contiguous()
+            selected_feat_point = self.mp(selected_feat_point).view(1, 128).contiguous()
             if i == 0:
                 suround_feat = selected_feat.unsqueeze(1) # (1, 1, 128)
+                suround_feat_p = selected_feat_point.unsqueeze(1)
             else:
-                suround_feat = torch.cat((selected_feat, torch.index_select(img_feat, 1, item).unsqueeze(1)), dim = 1)
-
+                suround_feat = torch.cat((selected_feat, selected_feat.unsqueeze(1)), dim = 1)
+                suround_feat_p = torch.cat((selected_feat_point, selected_feat_point.unsqueeze(1)), dim = 1)
         # suround_feat(1, numpt, 128)
+        # suround_feat_p (1, numpt, 128)
 
-        cloud = cloud.transpose(2, 1).contiguous() #(1, 3, numpt)
-        cloud = self.pconv1(cloud)
-        cloud = self.pconv2(F.leaky_relu(cloud)) #(1, 128, numpt)
         suround_feat = suround_feat.transpose(2, 1).contiguous() #(1, 128, numpt)
-        final = torch.cat((suround_feat, cloud), dim = 1) #(1, 256, numpt)
-        final = self.final_conv(F.leaky_relu(final)) #(1, 128, numpt)
+        suround_feat_p = suround_feat_p.transpose(2, 1).contiguous()
+        final1 = torch.cat((suround_feat, cloud_feat.transpose(2, 1).contiguous()), dim = 1) #(1, 256, numpt) collecting closest pixels.
+        final2 = torch.cat((suround_feat_p, img_feat.transpose(2, 1).contiguous()), dim = 1) #(1, 160, numpt) collecting closest points in the point cloud
+        final = torch.cat((final2, final1), dim = 1) # (1, 256, 160)
+        final = self.final_conv(F.leaky_relu(final)) #(1, 32, numpt)
         return final
 '''
 Temporal relation module in TF-Blender
