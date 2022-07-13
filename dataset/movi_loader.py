@@ -22,17 +22,19 @@ from IPython.display import HTML as html_print
 import matplotlib.pyplot as plt
 import quaternion
 
+
+# with tf.device('/cpu:0'):
 class Dataset(data.Dataset):
-    def __init__(self, opt, mode = 'train', length = 5000, ds = None):
+    def __init__(self, opt, mode = 'train', length = 5000):
         self.ms = opt.memory_size
         self.num_pt = opt.num_pt
-        self.ds = ds
-
+        self.root = opt.dataset_root
+        self.mode = mode
+        self.video_num = len(os.listdir(os.path.join(opt.dataset_root, mode, opt.category)))
         self.length = length
-        self.dis_scale = 1000.
+        self.dis_scale = 100.
         self.cate = opt.category
         self.intrinsics = np.array([[280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]])
-        #self.border_list =  [-1, 32, 64, 96, 128, 160, 192, 224, 256, 288]
         self.border_list = [-1, 80, 120, 160, 200, 240, 280]
         self.xmap = np.array([[j for i in range(256)] for j in range(256)])
         self.ymap = np.array([[i for i in range(256)] for j in range(256)])
@@ -107,10 +109,12 @@ class Dataset(data.Dataset):
         if cmin < 0:
             cmin = 0
 
-        if ((rmax - rmin) in self.border_list) and ((cmax - cmin) in self.border_list):
-            return rmin, rmax, cmin, cmax
-        else:
-            return 0
+        # print(rmin, rmax, cmin, cmax)
+        # if ((rmax - rmin) in self.border_list) and ((cmax - cmin) in self.border_list):
+        return rmin, rmax, cmin, cmax
+
+        # else:
+        #     return 0
 
     def search_fit(self, points):
         min_x = min(points[:, 0])
@@ -138,27 +142,22 @@ class Dataset(data.Dataset):
 
         return target
 
-    def get_frame(self, index, sample, bboxes, bbox_frames, in_cate, resolution):
-        # idx = np.nonzero(bbox_frames[in_cate] == index)[0][0]
-        # miny, minx, maxy, maxx = bboxes[in_cate][idx]
-        # miny = max(1, miny * resolution[0])
-        # minx = max(1, minx * resolution[1])
-        # maxy = min(resolution[0] - 1, maxy * resolution[0])
-        # maxx = min(resolution[1] - 1, maxx * resolution[1])
-        bb3d = sample['instances']['bboxes_3d'][in_cate][index]
+    def get_frame(self, index, video_path, in_cate):
 
+        # bb3d = sample['instances']['bboxes_3d'][in_cate][index]
+        bb3d = np.load(os.path.join(video_path, 'bboxes_3d.npy'))[in_cate][index]
         # bb3d = self.enlarge_bbox(bb3d)
-        c_r = np.quaternion(sample['camera']['quaternions'][index][0], sample['camera']['quaternions'][index][1], sample['camera']['quaternions'][index][2], sample['camera']['quaternions'][index][3])
-        c_r = quaternion.as_rotation_matrix(c_r)
-        c_t = sample['camera']['positions'][index]
+        # c_r = np.quaternion(sample['camera']['quaternions'][index][0], sample['camera']['quaternions'][index][1], sample['camera']['quaternions'][index][2], sample['camera']['quaternions'][index][3])
+        c_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
+        c_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
         miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t)
 
-        minv, maxv = sample['metadata']['depth_range']
-        depth = sample["depth"] / 65535 * (maxv - minv) + minv
+        minv, maxv = np.load(os.path.join(video_path, 'depth_range' + '.npy'))
+        depth = np.load(os.path.join(video_path, 'depth_' +str(index)+ '.npy')) / 65535 * (maxv - minv) + minv
         #np.set_printoptions(threshold = np.inf)
-        segmentation = sample['segmentations'][index][miny: maxy, minx: maxx] #(256, 256, 1)
-        segmentation = np.transpose(segmentation, (2, 0, 1))
-        segmentation = np.squeeze(segmentation, 0)
+        # segmentation = sample['segmentations'][index][miny: maxy, minx: maxx] #(256, 256, 1)
+        # segmentation = np.transpose(segmentation, (2, 0, 1))
+        # segmentation = np.squeeze(segmentation, 0)
 
         '''
         Testing plot
@@ -168,17 +167,20 @@ class Dataset(data.Dataset):
         # ax.imshow(sample['video'][index])
         # ax.imshow(sample['video'][index][miny: maxy, minx: maxx])
         # plt.show()
-        return bb3d, (segmentation == (in_cate + 1)).astype(np.float32), np.transpose(sample['video'][index][miny: maxy, minx: maxx] / 255., (2, 0, 1)), depth[index][miny: maxy, minx: maxx], miny, maxy, minx, maxx
+        return bb3d , np.transpose(np.load(os.path.join(video_path, 'rgb_' + str(index) + '.npy'))[miny: maxy, minx: maxx] / 255., (2, 0, 1)), depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
 
-    def get_pose(self, cate, frame_id, sample):
-        qa = np.quaternion(sample['instances']['quaternions'][cate][frame_id][0], sample['instances']['quaternions'][cate][frame_id][1], sample['instances']['quaternions'][cate][frame_id][2], sample['instances']['quaternions'][cate][frame_id][3])
-        t = sample['instances']['positions'][cate][frame_id]
+    def get_pose(self, cate, frame_id, video_path):
+        ins_r = np.load(os.path.join(video_path, 'instances_r' + '.npy'))
+        ins_t = np.load(os.path.join(video_path, 'instances_t' + '.npy'))
+        qa = np.quaternion(ins_r[cate][frame_id][0], ins_r[cate][frame_id][1], ins_r[cate][frame_id][2], ins_r[cate][frame_id][3])
+        t = ins_t[cate][frame_id]
         r = quaternion.as_rotation_matrix(qa)
         return r, t
 
-    def get_cloud(self, depth, miny, maxy, minx, maxx, camera_r, camera_t, limit):
+    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index):
         choose = (depth.flatten() > -1000.).nonzero()[0]
-
+        camera_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
+        camera_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
         if len(choose) == 0:
             return 0
         if len(choose) > self.num_pt:
@@ -265,134 +267,117 @@ class Dataset(data.Dataset):
 
         return cloud_fr, cloud_to
     def __getitem__(self, index):
-        with tf.device('/cpu:0'):
-            while(True):
+        # with tf.device('/cpu:0'):
+        while(True):
+        # try:
+        #   sample = next(self.ds)
+            choose_video = random.sample(range(self.video_num), 1)[0]
+            video_path = os.path.join(self.opt.dataset_root, self.mode, self.opt.category, str(choose_video))
+            # bboxes = np.load(os.path.join(video_path, 'bboxes.npy'))
+            # bboxes = sample["instances"]["bboxes"]
+            # bbox_frames = sample["instances"]["bbox_frames"]
+            bbox_frames = np.load(os.path.join(video_path, 'bbox_frames.npy'))
+            category = np.load(os.path.join(video_path, 'category.npy'))
+
+            flag = 0
+            if self.ms != 0:
+                fr_his = []
+                choose_his = []
+                cloud_his = []
+                t_his = []
+
+            if self.cate not in category:
+                continue
+
+            in_cate = random.sample(np.argwhere(category == self.cate), 1)[0][0]
+
+            while True:
                 # try:
-                sample = next(self.ds)
-                bboxes = sample["instances"]["bboxes"]
-                bbox_frames = sample["instances"]["bbox_frames"]
-                resolution = sample["video"].shape[-3:-1]
-                category = sample['instances']['category']
 
-                flag = 0
-                if self.ms != 0:
-                    fr_his = []
-                    choose_his = []
-                    cloud_his = []
-                    t_his = []
-
-                if self.cate not in category:
+                if len(bbox_frames[in_cate]) < self.ms + 2:
+                    flag = 1
+                    break
+                choose_frame = random.sample(range(24), 2)
+                if choose_frame[0] >= choose_frame[1]:
                     continue
-                for in_cate, ca in enumerate(category):
-
-                    if ca == self.cate:
-
-                        while True:
-                            try:
-
-                                if len(bbox_frames[in_cate]) < self.ms + 2:
-                                    flag = 1
-                                    break
-                                choose_frame = random.sample(range(24), 2)
-                                if choose_frame[0] >= choose_frame[1]:
-                                    continue
-                                if choose_frame[0] not in bbox_frames[in_cate] or choose_frame[1] not in bbox_frames[in_cate]:
-                                    continue
-                                if choose_frame[0] < self.ms:
-                                    continue
-                                if self.ms > 0  and list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) < self.ms :
-                                    continue
-
-                                '''
-                                Obtaining historical frames (Remember to add limit)
-                                '''
-                                for m in range(self.ms):
-                                    his_index = bbox_frames[list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) - self.ms - m]
-                                    _ , _, his_frame, his_depth, his_miny, his_maxy, his_minx, his_maxx = self.get_frame(his_index,
-                                                                                                            sample, bboxes,
-                                                                                                            bbox_frames,
-                                                                                                            in_cate, resolution)
-                                    _, his_t = self.get_pose(in_cate, his_index, sample)
-                                    his_cloud, his_choose = self.get_cloud(his_depth, his_miny, his_maxy, his_minx, his_maxx,
-                                                          quaternion.as_rotation_matrix(
-                                                              np.quaternion(sample['camera']['quaternions'][his_index][0],
-                                                                            sample['camera']['quaternions'][his_index][1],
-                                                                            sample['camera']['quaternions'][his_index][2],
-                                                                            sample['camera']['quaternions'][his_index][3])),
-                                                          sample['camera']['positions'][[his_index]])
-                                    fr_his.append(self.norm(torch.from_numpy(his_frame.astype(np.float32))))
-                                    choose_his.append(torch.LongTensor(his_choose.astype(np.float32)))
-                                    cloud_his.append(torch.from_numpy(his_cloud.astype(np.float32)))
-                                    t_his.append(torch.from_numpy(his_t.astype(np.float32)))
-
-                                '''
-                                Obtaining current and next frames
-                                '''
-
-                                fr_bb3d, fr_seg, fr_frame, fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx = self.get_frame(choose_frame[0], sample, bboxes, bbox_frames, in_cate, resolution)
-                                to_bb3d, to_seg, to_frame, to_depth, to_miny, to_maxy, to_minx, to_maxx = self.get_frame(choose_frame[1], sample, bboxes, bbox_frames, in_cate, resolution)
-
-
-
-                                fr_r, fr_t = self.get_pose(in_cate, choose_frame[0], sample)
-                                to_r, to_t = self.get_pose(in_cate, choose_frame[1], sample)
-
-
-                                limit_fr = self.search_fit(fr_bb3d)
-                                limit_to = self.search_fit(to_bb3d)
-                                # fr_bb3d = (fr_bb3d - fr_t) @ fr_r # object space
-                                fr_bb3d /= self.dis_scale
-                                anchor_box, scale = self.get_anchor_box(fr_bb3d)
-
-                                fr_t /= self.dis_scale
-                                to_t /= self.dis_scale
-
-
-                                fr_cloud, fr_choose = self.get_cloud(fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx, quaternion.as_rotation_matrix(np.quaternion(sample['camera']['quaternions'][choose_frame[0]][0], sample['camera']['quaternions'][choose_frame[0]][1], sample['camera']['quaternions'][choose_frame[0]][2], sample['camera']['quaternions'][choose_frame[0]][3])), sample['camera']['positions'][[choose_frame[0]]], limit_fr)
-
-                                fr_seg = fr_seg.flatten()[fr_choose]
-                                to_cloud, to_choose = self.get_cloud(to_depth, to_miny, to_maxy, to_minx, to_maxx,
-                                                          quaternion.as_rotation_matrix(
-                                                              np.quaternion(sample['camera']['quaternions'][choose_frame[1]][0],
-                                                                            sample['camera']['quaternions'][choose_frame[1]][1],
-                                                                            sample['camera']['quaternions'][choose_frame[1]][2],
-                                                                            sample['camera']['quaternions'][choose_frame[1]][3])),
-                                                          sample['camera']['positions'][[choose_frame[1]]], limit_to)
-                                to_seg = to_seg.flatten()[to_choose] #(1, numpt)
-
-                                fr_cloud /= self.dis_scale
-                                to_cloud /= self.dis_scale
-
-                                # np.set_printoptions(threshold = np.inf)
-                                fr_cloud, to_cloud = self.change_to_scale(scale, fr_cloud, to_cloud)
-                            except:
-                                continue
-                            break
-
-                        break
-
-                if flag == 1:
+                if choose_frame[0] not in bbox_frames[in_cate] or choose_frame[1] not in bbox_frames[in_cate]:
                     continue
+                if choose_frame[0] < self.ms:
+                    continue
+                if self.ms > 0  and list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) < self.ms :
+                    continue
+
+                '''
+                Obtaining historical frames (Remember to add limit)
+                '''
+                for m in range(self.ms):
+                    his_index = bbox_frames[list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) - self.ms - m]
+                    _ ,  his_frame, his_depth, his_miny, his_maxy, his_minx, his_maxx = self.get_frame(his_index,video_path,in_cate)
+                    _, his_t = self.get_pose(in_cate, his_index, video_path)
+                    his_cloud, his_choose = self.get_cloud(his_depth, his_miny, his_maxy, his_minx, his_maxx, video_path, his_index)
+                    fr_his.append(self.norm(torch.from_numpy(his_frame.astype(np.float32))))
+                    choose_his.append(torch.LongTensor(his_choose.astype(np.float32)))
+                    cloud_his.append(torch.from_numpy(his_cloud.astype(np.float32)))
+                    t_his.append(torch.from_numpy(his_t.astype(np.float32)))
+
+                '''
+                Obtaining current and next frames index, video_path, in_cate
+                '''
+
+                fr_bb3d,  fr_frame, fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx = self.get_frame(choose_frame[0], video_path, in_cate)
+                to_bb3d,  to_frame, to_depth, to_miny, to_maxy, to_minx, to_maxx = self.get_frame(choose_frame[1], video_path, in_cate)
+
+                fr_r, fr_t = self.get_pose(in_cate, choose_frame[0], video_path)
+                to_r, to_t = self.get_pose(in_cate, choose_frame[1], video_path)
+
+                # limit_fr = self.search_fit(fr_bb3d)
+                # limit_to = self.search_fit(to_bb3d)
+                # fr_bb3d = (fr_bb3d - fr_t) @ fr_r # object space
+                fr_bb3d /= self.dis_scale
+                anchor_box, scale = self.get_anchor_box(fr_bb3d)
+
+                fr_t /= self.dis_scale
+                to_t /= self.dis_scale
+
+
+                fr_cloud, fr_choose = self.get_cloud(fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx, video_path, choose_frame[0])
+
+                # fr_seg = fr_seg.flatten()[fr_choose]
+                to_cloud, to_choose = self.get_cloud(to_depth, to_miny, to_maxy, to_minx, to_maxx, video_path, choose_frame[1])
+                # to_seg = to_seg.flatten()[to_choose] #(1, numpt)
+
+                fr_cloud /= self.dis_scale
+                to_cloud /= self.dis_scale
+
+                # np.set_printoptions(threshold = np.inf)
+                fr_cloud, to_cloud = self.change_to_scale(scale, fr_cloud, to_cloud)
+                # except:
+                #     print('loader error')
+                #     continue
                 break
 
-            if self.ms != 0:
-                return torch.from_numpy(fr_seg), self.norm(torch.from_numpy(fr_frame.astype(np.float32))), torch.from_numpy(fr_r.astype(np.float32)),\
-                                 torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)),\
-                                 torch.LongTensor(fr_choose.astype(np.int32)),\
-                                 torch.from_numpy(to_seg), self.norm(torch.from_numpy(to_frame.astype(np.float32))),\
-                                           torch.from_numpy(to_r.astype(np.float32)),\
-                                           torch.from_numpy(to_t.astype(np.float32)),\
-                                           torch.from_numpy(to_cloud.astype(np.float32)),\
-                                           torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float)), fr_his, choose_his, cloud_his,\
-                                           t_his
-            else:
-                return torch.from_numpy(fr_seg), self.norm(torch.from_numpy(fr_frame.astype(np.float32))), torch.from_numpy(fr_r.astype(np.float32)),\
-                                 torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)),\
-                                 torch.LongTensor(fr_choose.astype(np.int32)),\
-                                 torch.from_numpy(to_seg), self.norm(torch.from_numpy(to_frame.astype(np.float32))),\
-                                           torch.from_numpy(to_r.astype(np.float32)),\
-                                           torch.from_numpy(to_t.astype(np.float32)),\
-                                           torch.from_numpy(to_cloud.astype(np.float32)),\
-                                           torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float))
+            if flag == 1:
+                continue
+            break
+
+        if self.ms != 0:
+            return  self.norm(torch.from_numpy(fr_frame.astype(np.float32))), torch.from_numpy(fr_r.astype(np.float32)),\
+                             torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)),\
+                             torch.LongTensor(fr_choose.astype(np.int32)),\
+                              self.norm(torch.from_numpy(to_frame.astype(np.float32))),\
+                                       torch.from_numpy(to_r.astype(np.float32)),\
+                                       torch.from_numpy(to_t.astype(np.float32)),\
+                                       torch.from_numpy(to_cloud.astype(np.float32)),\
+                                       torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float)), fr_his, choose_his, cloud_his,\
+                                       t_his
+        else:
+            return  self.norm(torch.from_numpy(fr_frame.astype(np.float32))), torch.from_numpy(fr_r.astype(np.float32)),\
+                             torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)),\
+                             torch.LongTensor(fr_choose.astype(np.int32)),\
+                              self.norm(torch.from_numpy(to_frame.astype(np.float32))),\
+                                       torch.from_numpy(to_r.astype(np.float32)),\
+                                       torch.from_numpy(to_t.astype(np.float32)),\
+                                       torch.from_numpy(to_cloud.astype(np.float32)),\
+                                       torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float))
 
 

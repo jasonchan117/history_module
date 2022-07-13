@@ -12,6 +12,7 @@ from knn_cuda import KNN
 import torch.distributions as tdist
 import copy
 
+global_scale = 1.
 
 class Loss(_Loss):
     def __init__(self, num_key):
@@ -212,7 +213,7 @@ class Loss(_Loss):
 
         Kp_dis = torch.mean(torch.norm((Kp_fr - Kp_to), dim=2), dim=1)
 
-        new_t *= 1000.0
+        new_t *= global_scale
         return ori_Kp_fr, new_r.detach().cpu().numpy()[0], new_t.detach().cpu().numpy()[0], Kp_dis.item(), att_to
 
     def ev_zero(self, Kp_fr, att_fr):
@@ -221,7 +222,7 @@ class Loss(_Loss):
 
         kp_dis = torch.norm(new_t.view(-1))
 
-        new_t *= 1000.0
+        new_t *= global_scale
         return new_t.detach().cpu().numpy()[0], att_fr, kp_dis.item()
 
     def inf(self, Kp_fr, Kp_to):
@@ -233,7 +234,7 @@ class Loss(_Loss):
 
         Kp_dis = torch.mean(torch.norm((Kp_fr - Kp_to), dim=2), dim=1)
 
-        new_t *= 1000.0
+        new_t *= global_scale
         return new_r.detach().cpu().numpy()[0], new_t.detach().cpu().numpy()[0], Kp_dis.item()
 
     def inf_zero(self, Kp_fr):
@@ -242,5 +243,5 @@ class Loss(_Loss):
 
         Kp_dis = torch.norm(new_t.view(-1))
 
-        new_t *= 1000.0
+        new_t *= global_scale
         return new_t.detach().cpu().numpy()[0], Kp_dis.item()

@@ -20,14 +20,13 @@ from dataset.movi_loader import Dataset
 from models import KeypointGenerator
 from libs.network import KeyNet
 from libs.loss import Loss
-import tensorflow as tf
-import tensorflow_datasets as tfds
+
 import warnings
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack]')
 parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
-parser.add_argument('--dataset_root', type=str, default = '', help='dataset root dir')
+parser.add_argument('--dataset_root', type=str, default = '/media/lang/My\ Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
 parser.add_argument('--category', type=int, default = 16,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
@@ -56,16 +55,20 @@ model.cuda()
 optimizer = optim.Adam(model.parameters(), lr = opt.lr)
 criterion = Loss(opt.num_kp)
 best_test = np.Inf
-
+traindataset = Dataset(opt, length=200, mode='train')
+traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=0)
+testdataset = Dataset(opt, length=500, mode='test')
+testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=False, num_workers=0)
 for epoch in range(opt.begin, opt.epoch):
 
-    with tf.device('/cpu:0'):
-        ds = tfds.load("movi_e", data_dir="gs://kubric-public/tfds", shuffle_files=True)
-        ds_train = iter(tfds.as_numpy(ds['train']))
+    # with tf.device('/cpu:0'):
 
+    # with tf.device('/cpu:0'):
+    #     ds = tfds.load("movi_e", data_dir="gs://kubric-public/tfds", shuffle_files=True)
 
-    traindataset = Dataset(opt, length=5000, mode='train', ds=ds_train)
-    traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=0)
+    # ds_train = iter(tfds.as_numpy(ds['train']))
+    # ds_test = iter(tfds.as_numpy(ds['test']))
+
 
     model.train()
     train_dis_avg = 0.0
@@ -73,19 +76,21 @@ for epoch in range(opt.begin, opt.epoch):
 
     optimizer.zero_grad()
     for i, data in enumerate(traindataloader, 0):
-        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
-        print('Epoch:', epoch + 1 , 'batch:', i + 1)
-        fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_seg.cuda(), fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_seg.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+        print('Epoch:', epoch + 1, 'batch:', i + 1)
+        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
+        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
         #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
-
-        kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
-        kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
-        try:
-            loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
-        except:
-            print('loss bugs')
-            continue
-        loss.backward()
+        while(True):
+            kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+            kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+            try:
+                loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
+            except:
+                print('loss error:')
+                print(kp_fr, kp_to)
+                continue
+            loss.backward()
+            break
 
         train_dis_avg += loss.item()
         train_count += 1
@@ -99,17 +104,15 @@ for epoch in range(opt.begin, opt.epoch):
             torch.save(model.state_dict(), '{0}/model_current_{1}.pth'.format(opt.outf, cates[opt.category]))
 
     if (epoch + 1) % opt.eval_fre == 0:
-        with tf.device('/cpu:0'):
-            ds_test = iter(tfds.as_numpy(ds['test']))
-        testdataset = Dataset(opt, length=500, mode='test', ds=ds_test)
-        testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=True, num_workers=0)
+
 
         optimizer.zero_grad()
         model.eval()
         score = []
         for j, data in enumerate(testdataloader, 0):
-            fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = data
-            fr_seg, fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_seg, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_seg.cuda(), fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_seg.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+            print('index:', j)
+            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = data
+            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
             kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
             kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
             _, item_score = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
