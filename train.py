@@ -28,7 +28,7 @@ parser.add_argument('--model', type = str, default = '6pack', help = 'models fro
 parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
 parser.add_argument('--dataset_root', type=str, default = '/media/lang/My\ Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
-parser.add_argument('--category', type=int, default = 16,  help='category to train')
+parser.add_argument('--category', type=int, default = 14,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
 parser.add_argument('--workers', type=int, default = 30, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
@@ -55,20 +55,11 @@ model.cuda()
 optimizer = optim.Adam(model.parameters(), lr = opt.lr)
 criterion = Loss(opt.num_kp)
 best_test = np.Inf
-traindataset = Dataset(opt, length=200, mode='train')
-traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=0)
+traindataset = Dataset(opt, length=5000, mode='train')
+traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=opt.workers)
 testdataset = Dataset(opt, length=500, mode='test')
-testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=False, num_workers=0)
+testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=False, num_workers=opt.workers)
 for epoch in range(opt.begin, opt.epoch):
-
-    # with tf.device('/cpu:0'):
-
-    # with tf.device('/cpu:0'):
-    #     ds = tfds.load("movi_e", data_dir="gs://kubric-public/tfds", shuffle_files=True)
-
-    # ds_train = iter(tfds.as_numpy(ds['train']))
-    # ds_test = iter(tfds.as_numpy(ds['test']))
-
 
     model.train()
     train_dis_avg = 0.0

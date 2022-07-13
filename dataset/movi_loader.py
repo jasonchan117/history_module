@@ -146,8 +146,6 @@ class Dataset(data.Dataset):
 
         # bb3d = sample['instances']['bboxes_3d'][in_cate][index]
         bb3d = np.load(os.path.join(video_path, 'bboxes_3d.npy'))[in_cate][index]
-        # bb3d = self.enlarge_bbox(bb3d)
-        # c_r = np.quaternion(sample['camera']['quaternions'][index][0], sample['camera']['quaternions'][index][1], sample['camera']['quaternions'][index][2], sample['camera']['quaternions'][index][3])
         c_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
         c_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
         miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t)
@@ -155,9 +153,7 @@ class Dataset(data.Dataset):
         minv, maxv = np.load(os.path.join(video_path, 'depth_range' + '.npy'))
         depth = np.load(os.path.join(video_path, 'depth_' +str(index)+ '.npy')) / 65535 * (maxv - minv) + minv
         #np.set_printoptions(threshold = np.inf)
-        # segmentation = sample['segmentations'][index][miny: maxy, minx: maxx] #(256, 256, 1)
-        # segmentation = np.transpose(segmentation, (2, 0, 1))
-        # segmentation = np.squeeze(segmentation, 0)
+
 
         '''
         Testing plot
@@ -267,18 +263,13 @@ class Dataset(data.Dataset):
 
         return cloud_fr, cloud_to
     def __getitem__(self, index):
-        # with tf.device('/cpu:0'):
+
         while(True):
-        # try:
-        #   sample = next(self.ds)
+
             choose_video = random.sample(range(self.video_num), 1)[0]
             video_path = os.path.join(self.opt.dataset_root, self.mode, self.opt.category, str(choose_video))
-            # bboxes = np.load(os.path.join(video_path, 'bboxes.npy'))
-            # bboxes = sample["instances"]["bboxes"]
-            # bbox_frames = sample["instances"]["bbox_frames"]
             bbox_frames = np.load(os.path.join(video_path, 'bbox_frames.npy'))
             category = np.load(os.path.join(video_path, 'category.npy'))
-
             flag = 0
             if self.ms != 0:
                 fr_his = []
@@ -341,10 +332,7 @@ class Dataset(data.Dataset):
 
 
                 fr_cloud, fr_choose = self.get_cloud(fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx, video_path, choose_frame[0])
-
-                # fr_seg = fr_seg.flatten()[fr_choose]
                 to_cloud, to_choose = self.get_cloud(to_depth, to_miny, to_maxy, to_minx, to_maxx, video_path, choose_frame[1])
-                # to_seg = to_seg.flatten()[to_choose] #(1, numpt)
 
                 fr_cloud /= self.dis_scale
                 to_cloud /= self.dis_scale
