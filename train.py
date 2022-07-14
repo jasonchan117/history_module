@@ -26,7 +26,7 @@ import warnings
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack]')
 parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
-parser.add_argument('--dataset_root', type=str, default = '/media/lang/My\ Passport/Dataset/MOvi', help='dataset root dir')
+parser.add_argument('--dataset_root', type=str, default = '/media/lang/My Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
 parser.add_argument('--category', type=int, default = 14,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
@@ -71,6 +71,7 @@ for epoch in range(opt.begin, opt.epoch):
         fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
         fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
         #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
+
         while(True):
             kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
             kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)

@@ -14,6 +14,7 @@ import torch.utils.data as data
 from PIL import Image
 import os
 import os.path
+import cv2 as cv
 import random
 import torch
 import matplotlib.patches
@@ -21,6 +22,7 @@ from scipy.spatial.transform import Rotation as R
 from IPython.display import HTML as html_print
 import matplotlib.pyplot as plt
 import quaternion
+c = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 
 
 # with tf.device('/cpu:0'):
@@ -28,9 +30,10 @@ class Dataset(data.Dataset):
     def __init__(self, opt, mode = 'train', length = 5000):
         self.ms = opt.memory_size
         self.num_pt = opt.num_pt
+        self.opt = opt
         self.root = opt.dataset_root
         self.mode = mode
-        self.video_num = len(os.listdir(os.path.join(opt.dataset_root, mode, opt.category)))
+        self.video_num = len(os.listdir(os.path.join(opt.dataset_root, mode, c[opt.category])))
         self.length = length
         self.dis_scale = 100.
         self.cate = opt.category
@@ -151,9 +154,7 @@ class Dataset(data.Dataset):
         miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t)
 
         minv, maxv = np.load(os.path.join(video_path, 'depth_range' + '.npy'))
-        depth = np.load(os.path.join(video_path, 'depth_' +str(index)+ '.npy')) / 65535 * (maxv - minv) + minv
-        #np.set_printoptions(threshold = np.inf)
-
+        depth = cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0] / 65535 * (maxv - minv) + minv
 
         '''
         Testing plot
@@ -163,7 +164,7 @@ class Dataset(data.Dataset):
         # ax.imshow(sample['video'][index])
         # ax.imshow(sample['video'][index][miny: maxy, minx: maxx])
         # plt.show()
-        return bb3d , np.transpose(np.load(os.path.join(video_path, 'rgb_' + str(index) + '.npy'))[miny: maxy, minx: maxx] / 255., (2, 0, 1)), depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
+        return bb3d , np.transpose(cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png'))[miny: maxy, minx: maxx] / 255., (2, 0, 1)), depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
 
     def get_pose(self, cate, frame_id, video_path):
         ins_r = np.load(os.path.join(video_path, 'instances_r' + '.npy'))
@@ -174,8 +175,10 @@ class Dataset(data.Dataset):
         return r, t
 
     def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index):
+
         choose = (depth.flatten() > -1000.).nonzero()[0]
         camera_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
+
         camera_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
         if len(choose) == 0:
             return 0
@@ -186,7 +189,10 @@ class Dataset(data.Dataset):
             choose = choose[c_mask.nonzero()]
         else:
             choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
+
         depth = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
+
+
         xmap_masked = self.xmap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
         ymap_masked = self.ymap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
         pt2 = depth / -1.
@@ -267,9 +273,11 @@ class Dataset(data.Dataset):
         while(True):
 
             choose_video = random.sample(range(self.video_num), 1)[0]
-            video_path = os.path.join(self.opt.dataset_root, self.mode, self.opt.category, str(choose_video))
-            bbox_frames = np.load(os.path.join(video_path, 'bbox_frames.npy'))
+            video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(choose_video))
+            bbox_frames = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle = True)
+
             category = np.load(os.path.join(video_path, 'category.npy'))
+
             flag = 0
             if self.ms != 0:
                 fr_his = []
@@ -280,7 +288,7 @@ class Dataset(data.Dataset):
             if self.cate not in category:
                 continue
 
-            in_cate = random.sample(np.argwhere(category == self.cate), 1)[0][0]
+            in_cate = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
 
             while True:
                 # try:
