@@ -33,7 +33,7 @@ parser.add_argument('--num_pt', type=int, default = 500, help='points')
 parser.add_argument('--workers', type=int, default = 30, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
 parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
-parser.add_argument('--lr', default=0.0001, help='learning rate', type = float)
+parser.add_argument('--lr', default=0.00001, help='learning rate', type = float)
 parser.add_argument('--occlude', action= 'store_true')
 parser.add_argument('--eval_fre', default=1, type = int)
 parser.add_argument('--epoch', default=100, type = int)
@@ -51,13 +51,15 @@ models = {'6pack':KeyNet(opt.num_pt, opt.num_kp)}
 model = models[opt.model]
 model.cuda()
 
+if opt.resume != '':
 
-optimizer = optim.Adam(model.parameters(), lr = opt.lr)
+    model.load_state_dict(torch.load(opt.resume))
+optimizer = optim.Adam(model.parameters(), lr = opt.lr, weight_decay = 0.00001)
 criterion = Loss(opt.num_kp)
-best_test = np.Inf
+best_test = opt.score
 traindataset = Dataset(opt, length=5000, mode='train')
 traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=opt.workers)
-testdataset = Dataset(opt, length=500, mode='test')
+testdataset = Dataset(opt, length=1000, mode='test')
 testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=False, num_workers=opt.workers)
 for epoch in range(opt.begin, opt.epoch):
 
@@ -67,7 +69,7 @@ for epoch in range(opt.begin, opt.epoch):
 
     optimizer.zero_grad()
     for i, data in enumerate(traindataloader, 0):
-        print('Epoch:', epoch + 1, 'batch:', i + 1)
+        print('Epoch:', epoch, 'batch:', i)
         fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
         fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
         #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
@@ -112,6 +114,7 @@ for epoch in range(opt.begin, opt.epoch):
             print(item_score)
             score.append(item_score)
         test_dis = np.mean(np.array(score))
+        print('>>>', test_dis)
         if test_dis < best_test:
             best_test = test_dis
             torch.save(model.state_dict(), '{0}/model_{1}_{2}_{3}.pth'.format(opt.outf, epoch, test_dis, cates[opt.category]))

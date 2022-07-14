@@ -35,7 +35,7 @@ class Dataset(data.Dataset):
         self.mode = mode
         self.video_num = len(os.listdir(os.path.join(opt.dataset_root, mode, c[opt.category])))
         self.length = length
-        self.dis_scale = 100.
+        self.dis_scale = 10.
         self.cate = opt.category
         self.intrinsics = np.array([[280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]])
         self.border_list = [-1, 80, 120, 160, 200, 240, 280]
