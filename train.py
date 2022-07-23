@@ -33,7 +33,7 @@ parser.add_argument('--num_pt', type=int, default = 500, help='points')
 parser.add_argument('--workers', type=int, default = 30, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
 parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
-parser.add_argument('--lr', default=0.00001, help='learning rate', type = float)
+parser.add_argument('--lr', default=0.0001, help='learning rate', type = float)
 parser.add_argument('--occlude', action= 'store_true')
 parser.add_argument('--eval_fre', default=1, type = int)
 parser.add_argument('--epoch', default=100, type = int)
@@ -49,12 +49,13 @@ cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "C
 
 models = {'6pack':KeyNet(opt.num_pt, opt.num_kp)}
 model = models[opt.model]
-model.cuda()
+model = model.float()
+model = model.cuda()
 
 if opt.resume != '':
 
     model.load_state_dict(torch.load(opt.resume))
-optimizer = optim.Adam(model.parameters(), lr = opt.lr, weight_decay = 0.00001)
+optimizer = optim.Adam(model.parameters(), lr = opt.lr)
 criterion = Loss(opt.num_kp)
 best_test = opt.score
 traindataset = Dataset(opt, length=5000, mode='train')
@@ -74,17 +75,16 @@ for epoch in range(opt.begin, opt.epoch):
         fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
         #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
 
-        while(True):
-            kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
-            kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
-            try:
-                loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
-            except:
-                print('loss error:')
-                print(kp_fr, kp_to)
-                continue
+
+        kp_fr, anc_fr, att_fr, w = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+        kp_to, anc_to, att_to, w_1 = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+
+        try:
+            loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
             loss.backward()
-            break
+        except:
+            print(w, w_1)
+            sys.exit()
 
         train_dis_avg += loss.item()
         train_count += 1
@@ -107,8 +107,9 @@ for epoch in range(opt.begin, opt.epoch):
             print('index:', j)
             fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = data
             fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
-            kp_fr, anc_fr, att_fr = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
-            kp_to, anc_to, att_to = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+
+            kp_fr, anc_fr, att_fr, _ = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+            kp_to, anc_to, att_to, _ = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
             _, item_score = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
 
             print(item_score)

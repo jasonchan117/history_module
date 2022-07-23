@@ -1,3 +1,5 @@
+import sys
+
 from torch.nn.modules.loss import _Loss
 from torch.autograd import Variable
 import math
@@ -120,12 +122,7 @@ class Loss(_Loss):
 
     def forward(self, Kp_fr, Kp_to, anc_fr, anc_to, att_fr, att_to, r_fr, t_fr, r_to, t_to, scale, cate):
 
-        Kp_fr = Kp_fr.float()
-        Kp_to = Kp_to.float()
-        # if cate.view(-1).item() in [2, 4, 5]:
-        #     sym_or_not = False
-        # else:
-        #     sym_or_not = True
+
         sym_or_not = False
         num_kp = self.num_key
         num_anc = len(anc_fr[0])
@@ -144,8 +141,9 @@ class Loss(_Loss):
         loss_att = (loss_att_fr + loss_att_to).contiguous() / 2.0
 
         ############# Different View Loss
+
         gt_Kp_fr = torch.bmm(Kp_fr - t_fr, r_fr).contiguous()
-        gt_Kp_to = torch.bmm(Kp_to - t_to, r_to).contiguous()
+        gt_Kp_to = torch.bmm(Kp_to - t_to, r_to).contiguous() # object space
 
         if sym_or_not:
             ver_Kp_fr, cent_fr = self.change_to_ver(gt_Kp_fr)
@@ -172,8 +170,9 @@ class Loss(_Loss):
             pred_r = self.estimate_rotation(rot_Kp_fr, rot_Kp_to, sym_or_not)
             frob_sqr = torch.sum(((pred_r - rot) * (pred_r - rot)).view(-1)).contiguous()
             frob = torch.sqrt(frob_sqr).unsqueeze(0).contiguous()
-            cc = torch.cat([self.oneone, frob / (2 * math.sqrt(2))]).contiguous()
-            loss_rot = 2.0 * torch.mean(torch.asin(torch.min(cc))).contiguous()
+            # cc = torch.cat([self.oneone, frob / (2 * math.sqrt(2))]).contiguous()
+            loss_rot = 2. * frob
+            # loss_rot = 2. * torch.mean(torch.asin(torch.min(cc))).contiguous()
 
 
 
@@ -196,10 +195,13 @@ class Loss(_Loss):
         loss_sep = (loss_sep_fr + loss_sep_to) / 2.0
 
         ########### SUM UP
-
-        loss = loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis + loss_rot * 0.2  + loss_sep
-        score = (loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis + loss_rot * 0.2).item()
+        # cent -> rot_error
+        loss = loss_att * 3.0 + Kp_dis * 2.0 + Kp_cent_dis + loss_rot * 0.2  + loss_sep
+        score = (loss_att * 3.0 + Kp_dis * 2.0 + Kp_cent_dis + loss_rot * 0.2).item()
         print(cate, loss_att.item(), Kp_dis.item(), Kp_cent_dis.item(), loss_rot.item(),  loss_sep.item())
+        # loss = loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis + loss_sep
+        # score = (loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis).item()
+        # print(cate, loss_att.item(), Kp_dis.item(), Kp_cent_dis.item(), loss_sep.item())
 
         return loss, score
 

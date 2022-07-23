@@ -34,7 +34,7 @@ class ModifiedResnet(nn.Module):
         super(ModifiedResnet, self).__init__()
 
         self.model = psp_models['resnet18'.lower()]()
-        self.model = nn.DataParallel(self.model)
+        # self.model = nn.DataParallel(self.model)
 
     def forward(self, x):
         x = self.model(x)
@@ -150,7 +150,7 @@ class KeyNet(nn.Module):
         scale_kp = scale.view(1, 1, 3).repeat(1, self.num_key, 1)
         all_kp_x = (all_kp_x * scale_kp).contiguous()
 
-        return all_kp_x, output_anchor, att_x
+        return all_kp_x, output_anchor, att_x, (out_img)
 
     def eval_forward(self, img, choose, ori_x, anchor, scale, space, first):
         num_anc = len(anchor[0])
