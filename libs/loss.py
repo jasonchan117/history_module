@@ -14,7 +14,7 @@ from knn_cuda import KNN
 import torch.distributions as tdist
 import copy
 
-global_scale = 1.
+global_scale = 10.
 
 class Loss(_Loss):
     def __init__(self, num_key):
@@ -157,7 +157,7 @@ class Loss(_Loss):
             Kp_cent_dis = (torch.norm(cent_fr - self.threezero) + torch.norm(cent_to - self.threezero)) / 2.0
 
         ############# Pose Error Loss
-        rot_Kp_fr = (Kp_fr - t_fr).contiguous()
+        rot_Kp_fr = (Kp_fr - t_fr).contiguous() # Isolate world space rotation problem
         rot_Kp_to = (Kp_to - t_to).contiguous()
         rot = torch.bmm(r_to, r_fr.transpose(2, 1))
 

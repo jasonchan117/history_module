@@ -27,7 +27,7 @@ import quaternion
 c = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 
 
-# with tf.device('/cpu:0'):
+
 class Dataset(data.Dataset):
     def __init__(self, opt, mode = 'train', length = 5000, eval = False):
         self.ms = opt.memory_size
@@ -46,24 +46,62 @@ class Dataset(data.Dataset):
         self.xmap = np.array([[j for i in range(256)] for j in range(256)])
         self.ymap = np.array([[i for i in range(256)] for j in range(256)])
         self.norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.trancolor = transforms.ColorJitter(0.8, 0.5, 0.5, 0.05)
+
         if self.eval == True:
             self.current_video_num = 0
-            video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
-            current_object = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle=True)
-            video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
-            category = np.load(os.path.join(video_path, 'category.npy'))
-            in_cate = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
+            self.index = 0
+            self.video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
+            category = np.load(os.path.join(self.video_path, 'category.npy'))
+            self.obj_index = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
+
+            # visible_sequence = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
+            # current_frame_index = visible_sequence[self.seq_index]
+    def update_frame(self):
+        self.index += 1
+        visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
+        if self.index >= len(visible_sequence): # Next video
+            self.current_video_num += 1
+            self.video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
+            category = np.load(os.path.join(self.video_path, 'category.npy'))
+            self.obj_index = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
+    def get_current_pose(self):
+        visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
+        # pcam = (bb3d-c_t) @ c_r
+        # pobj = (bb3d-t) @ r
+        # print('----')
+        # print(pcam, pobj @ r.T @ c_r + c_r.T @ (t - c_t))
+        r, t = self.get_pose(self.obj_index, visible_sequence[self.index], self.video_path)
+        c_r = np.load(os.path.join(self.video_path, 'cam_r_' + str(visible_sequence[self.index]) + '.npy'))
+        c_t = np.load(os.path.join(self.video_path, 'cam_t_' + str(visible_sequence[self.index]) + '.npy'))
+        return (r.T @ c_r).T, c_r.T @ (t - c_t)
+    def get_next(self, r, t):
+        visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
+
+        bb3d, img, depth, miny, maxy, minx, maxx = self.get_frame(visible_sequence[self.index], self.video_path, self.obj_index, eval = True, current_r=r, current_t=t)
+        limit = self.search_fit(bb3d)
+        bb3d = bb3d / self.dis_scale
+        anchor_box, scale = self.get_anchor_box(bb3d)
+
+
+        cloud, choose = self.get_cloud(depth, miny, maxy, minx, maxx , self.video_path, visible_sequence[self.index], limit, eval = True, current_r=r, current_t=t)
+        cloud = cloud / self.dis_scale
+        cloud = self.change_to_scale(scale, cloud_fr = cloud, eval = True)
+        return self.norm(torch.from_numpy(img.astype(np.float32))).unsqueeze(0), \
+                torch.LongTensor(choose.astype(np.int32)).unsqueeze(0), \
+               torch.from_numpy(cloud.astype(np.float32)).unsqueeze(0), \
+               torch.from_numpy(anchor_box.astype(np.float32)).unsqueeze(0), \
+               torch.from_numpy(scale.astype(np.float32)).unsqueeze(0)
 
     def __len__(self):
         return self.length
 
-    def enlarged_2d_box(self, cloud, cam_r, cam_t):
+    def enlarged_2d_box(self, cloud, cam_r = None, cam_t = None, eval = False):
         rmin = 10000
         rmax = -10000
         cmin = 10000
         cmax = -10000
-        cloud = (cloud - cam_t) @ cam_r
+        if eval == False:
+            cloud = (cloud - cam_t) @ cam_r
         for tg in cloud:
             p1 = int(tg[0] * -280. / tg[2] + 127.5)
             p0 = int(tg[1] * 280 / tg[2] + 127.5)
@@ -157,16 +195,23 @@ class Dataset(data.Dataset):
         return target
 
 
-    def get_frame(self, index, video_path, in_cate):
+    def get_frame(self, index, video_path, in_cate, eval = False, current_r = None, current_t = None):
 
         # bb3d = sample['instances']['bboxes_3d'][in_cate][index]
         bb3d = np.load(os.path.join(video_path, 'bboxes_3d.npy'))[in_cate][index]
         r, t = self.get_pose(in_cate,  index, video_path)
         bb3d = self.enlarge_bbox((copy.deepcopy(bb3d) - t) @ r) # Object space
-        bb3d = bb3d @ r.T + t # world space
-        c_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
-        c_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
-        miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t)
+        ev = False
+        if eval == True:
+            bb3d = bb3d @ current_r.T + current_t # camera space
+            ev = True
+        else:
+            bb3d = bb3d @ r.T + t # world space
+            c_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
+            c_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
+
+
+        miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t, eval = ev)
 
         minv, maxv = np.load(os.path.join(video_path, 'depth_range' + '.npy'))
         # depth = np.round(np.sqrt((cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0][:, :, np.newaxis] / 65535).clip(0, 1.)) * 255).astype(np.uint8)
@@ -175,7 +220,8 @@ class Dataset(data.Dataset):
         # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 0])
         #
         # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 1])
-
+        if eval == True:
+            bb3d = (bb3d - current_t) @ current_r # Object space
         '''
         Depth test
         '''
@@ -207,7 +253,7 @@ class Dataset(data.Dataset):
         r = quaternion.as_rotation_matrix(qa)
         return r, t
 
-    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit):
+    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit, eval = False, current_r = None, current_t = None):
         np.set_printoptions(threshold=np.inf)
         choose = (depth.flatten() > -1000.).nonzero()[0]
 
@@ -235,7 +281,10 @@ class Dataset(data.Dataset):
         pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
         cloud = np.concatenate((-1. * pt0, pt1, pt2), axis=1)
 
-        cloud = cloud @ camera_r.T + camera_t # world space
+        if eval == True:
+            cloud = cloud @ current_r.T + current_t # object space
+        else:
+            cloud = cloud @ camera_r.T + camera_t # world space
 
         # print((cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]))
         # print('-----------------')
@@ -263,7 +312,10 @@ class Dataset(data.Dataset):
         pt0 = (ymap_masked - self.intrinsics[0][2]) * pt2 / self.intrinsics[0][0]
         pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
         cloud = np.concatenate((-pt0, pt1, pt2), axis=1)
-        cloud = cloud @ camera_r.T + camera_t # world space
+        if eval == True:
+            cloud = cloud @ current_r.T + current_t # object space
+        else:
+            cloud = cloud @ camera_r.T + camera_t # world space
         return cloud , choose
 
 
@@ -303,9 +355,10 @@ class Dataset(data.Dataset):
         pts[:, 2] = pts[:, 2] / scale[2]
 
         return pts
-    def change_to_scale(self, scale, cloud_fr, cloud_to):
+    def change_to_scale(self, scale, cloud_fr, cloud_to = None, eval = False):
         cloud_fr = self.divide_scale(scale, cloud_fr)
-        cloud_to = self.divide_scale(scale, cloud_to)
+        if eval == False:
+            cloud_to = self.divide_scale(scale, cloud_to)
 
         return cloud_fr, cloud_to
     def get_init_pose(self, video_num, in_cate):
