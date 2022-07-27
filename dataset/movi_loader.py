@@ -59,11 +59,15 @@ class Dataset(data.Dataset):
     def update_frame(self):
         self.index += 1
         visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
+
         if self.index >= len(visible_sequence): # Next video
+            self.index = 0
             self.current_video_num += 1
             self.video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
             category = np.load(os.path.join(self.video_path, 'category.npy'))
             self.obj_index = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
+            return True
+        return False
     def get_current_pose(self):
         visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
         # pcam = (bb3d-c_t) @ c_r
@@ -85,7 +89,7 @@ class Dataset(data.Dataset):
 
         cloud, choose = self.get_cloud(depth, miny, maxy, minx, maxx , self.video_path, visible_sequence[self.index], limit, eval = True, current_r=r, current_t=t)
         cloud = cloud / self.dis_scale
-        cloud = self.change_to_scale(scale, cloud_fr = cloud, eval = True)
+        cloud, _ = self.change_to_scale(scale, cloud_fr = cloud, eval = True)
         return self.norm(torch.from_numpy(img.astype(np.float32))).unsqueeze(0), \
                 torch.LongTensor(choose.astype(np.int32)).unsqueeze(0), \
                torch.from_numpy(cloud.astype(np.float32)).unsqueeze(0), \
@@ -205,6 +209,8 @@ class Dataset(data.Dataset):
         if eval == True:
             bb3d = bb3d @ current_r.T + current_t # camera space
             ev = True
+            c_r = None
+            c_t = None
         else:
             bb3d = bb3d @ r.T + t # world space
             c_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
@@ -282,7 +288,7 @@ class Dataset(data.Dataset):
         cloud = np.concatenate((-1. * pt0, pt1, pt2), axis=1)
 
         if eval == True:
-            cloud = cloud @ current_r.T + current_t # object space
+            cloud = (cloud - current_t )@ current_r # object space
         else:
             cloud = cloud @ camera_r.T + camera_t # world space
 
@@ -313,7 +319,7 @@ class Dataset(data.Dataset):
         pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
         cloud = np.concatenate((-pt0, pt1, pt2), axis=1)
         if eval == True:
-            cloud = cloud @ current_r.T + current_t # object space
+            cloud = (cloud - current_t )@ current_r # object space
         else:
             cloud = cloud @ camera_r.T + camera_t # world space
         return cloud , choose
@@ -361,9 +367,9 @@ class Dataset(data.Dataset):
             cloud_to = self.divide_scale(scale, cloud_to)
 
         return cloud_fr, cloud_to
-    def get_init_pose(self, video_num, in_cate):
-        video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(video_num))
-        bbox_frames = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle=True)
+    # def get_init_pose(self, video_num, in_cate):
+    #     video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(video_num))
+    #     bbox_frames = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle=True)
 
     def __getitem__(self, index):
 
