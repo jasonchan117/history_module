@@ -20,6 +20,7 @@ from dataset.movi_loader import Dataset
 from models import KeypointGenerator
 from libs.network import KeyNet
 from libs.loss import Loss
+from benchmark import benchmark
 import copy
 
 parser = argparse.ArgumentParser()
@@ -35,7 +36,7 @@ parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
 parser.add_argument('--occlude', action= 'store_true')
 parser.add_argument('--ccd', action = 'store_true', help = 'Use skeleton merger to compute the CCD loss.')
 parser.add_argument('--tfb', action = 'store_true', help = 'Use TF-Blender or not.')
-parser.add_argument('--video_num', default = 976)
+parser.add_argument('--video_num', default = 976, type = int)
 parser.add_argument('--memory_size', default=0, type = int)
 
 opt = parser.parse_args()
@@ -48,13 +49,26 @@ criterion = Loss(opt.num_kp)
 model.load_state_dict(torch.load(opt.resume))
 test_dataset = Dataset(opt, mode = 'test', length = 5000, eval = True)
 
+
+cls_in_5_5 = 0
+cls_iou_25 = 0
+
+cls_rot = []
+cls_trans = []
+cout = 0
 while(test_dataset.current_video_num <= opt.video_num):
     '''
     Video
     '''
 
     current_r, current_t = test_dataset.get_current_pose()
-    img, choose, cloud, anchor, scale = test_dataset.get_next(current_r, current_t)
+    while (True):
+        try:
+            img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
+        except:
+            test_dataset.update_frame()
+            continue
+        break
     img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
     Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
     min_dis = 0.0005
@@ -67,7 +81,7 @@ while(test_dataset.current_video_num <= opt.video_num):
             if test_dataset.update_frame():
                 break
 
-            img, choose, cloud, anchor, scale = test_dataset.get_next(current_r, current_t)
+            img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
             img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
         except:
             continue
@@ -84,17 +98,35 @@ while(test_dataset.current_video_num <= opt.video_num):
                 best_r = new_r
                 best_t = new_t
                 best_att = copy.deepcopy(att)
-        print(min_dis)
+        print('Distance:', min_dis)
 
         current_t = current_t + np.dot(best_t, current_r.T)
         current_r = np.dot(current_r, best_r)
 
+        c_transform = np.concatenate((current_r, current_t[:, np.newaxis]), axis = 1)
+        c_transform = np.concatenate((c_transform, [[0.0, 0.0, 0.0, 1.0]]), axis = 0)
+        g_transform = np.concatenate((gt_r, gt_t[:, np.newaxis]), axis = 1)
+        g_transform = np.concatenate((g_transform, [[0.0, 0.0, 0.0, 1.0]]), axis = 0)
+        bb3d = bb3d.transpose(1, 0)
 
+        cm, IoU, r_er, t_er = benchmark(c_transform, g_transform, bb3d)
+        cout += 1
+        if r_er != None:
+            cls_rot.append(r_er)
+        if t_er != None:
+            cls_trans.append(t_er)
 
-
+        cls_in_5_5 += cm
+        cls_iou_25 += IoU
 
         print("NEXT FRAME!!!")
 
+score55 = cls_in_5_5 / cout
+score25 = cls_iou_25 / cout
+rot_error = np.mean(cls_rot)
+trans_error = np.mean(cls_trans)
+
+print('5cm 5degree:', score55 *100, 'IoU 25:', score25 * 100, 'rot error:', rot_error, 'translation error:', trans_error)
 
 
 

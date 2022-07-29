@@ -77,7 +77,7 @@ class Dataset(data.Dataset):
         r, t = self.get_pose(self.obj_index, visible_sequence[self.index], self.video_path)
         c_r = np.load(os.path.join(self.video_path, 'cam_r_' + str(visible_sequence[self.index]) + '.npy'))
         c_t = np.load(os.path.join(self.video_path, 'cam_t_' + str(visible_sequence[self.index]) + '.npy'))
-        return (r.T @ c_r).T, c_r.T @ (t - c_t)
+        return (r.T @ c_r).T, c_r.T @ (t - c_t) # No need to do the scaling.
     def get_next(self, r, t):
         visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
 
@@ -85,6 +85,16 @@ class Dataset(data.Dataset):
         limit = self.search_fit(bb3d)
         bb3d = bb3d / self.dis_scale
         anchor_box, scale = self.get_anchor_box(bb3d)
+
+        w_r, w_t = self.get_pose(self.obj_index, visible_sequence[self.index], self.video_path)
+        c_r = np.load(os.path.join(self.video_path, 'cam_r_' + str(visible_sequence[self.index]) + '.npy'))
+        c_t = np.load(os.path.join(self.video_path, 'cam_t_' + str(visible_sequence[self.index]) + '.npy'))
+
+        gt_r, gt_t = (w_r.T @ c_r).T, c_r.T @ (w_t - c_t) # Ground truth rotation and translation from object space to camera space
+
+        bb3d = np.load(os.path.join(self.video_path, 'bboxes_3d.npy'))[self.obj_index][visible_sequence[self.index]]
+
+        bb3d = (bb3d - w_t) @ w_r # Object space
 
 
         cloud, choose = self.get_cloud(depth, miny, maxy, minx, maxx , self.video_path, visible_sequence[self.index], limit, eval = True, current_r=r, current_t=t)
@@ -94,7 +104,7 @@ class Dataset(data.Dataset):
                 torch.LongTensor(choose.astype(np.int32)).unsqueeze(0), \
                torch.from_numpy(cloud.astype(np.float32)).unsqueeze(0), \
                torch.from_numpy(anchor_box.astype(np.float32)).unsqueeze(0), \
-               torch.from_numpy(scale.astype(np.float32)).unsqueeze(0)
+               torch.from_numpy(scale.astype(np.float32)).unsqueeze(0), gt_r, gt_t, bb3d
 
     def __len__(self):
         return self.length
@@ -228,6 +238,7 @@ class Dataset(data.Dataset):
         # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 1])
         if eval == True:
             bb3d = (bb3d - current_t) @ current_r # Object space
+
         '''
         Depth test
         '''
@@ -367,9 +378,6 @@ class Dataset(data.Dataset):
             cloud_to = self.divide_scale(scale, cloud_to)
 
         return cloud_fr, cloud_to
-    # def get_init_pose(self, video_num, in_cate):
-    #     video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(video_num))
-    #     bbox_frames = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle=True)
 
     def __getitem__(self, index):
 

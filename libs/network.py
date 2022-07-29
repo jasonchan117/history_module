@@ -162,7 +162,7 @@ class KeyNet(nn.Module):
         choose = choose.repeat(1, di, 1)
         emb = torch.gather(emb, 2, choose)
         emb = emb.repeat(1, 1, num_anc).detach()
-        # print(emb.size())
+
 
         output_anchor = anchor.view(1, num_anc, 3)
         anchor_for_key = anchor.view(1, num_anc, 1, 3).repeat(1, 1, self.num_key, 1)
