@@ -196,8 +196,8 @@ class Loss(_Loss):
 
         ########### SUM UP
         # cent -> rot_error
-        loss = loss_att * 3.0 + Kp_dis * 2.0 + Kp_cent_dis + loss_rot * 0.2  + loss_sep
-        score = (loss_att * 3.0 + Kp_dis * 2.0 + Kp_cent_dis + loss_rot * 0.2).item()
+        loss = loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis + loss_rot * 0.2  + loss_sep
+        score = (loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis + loss_rot * 0.2).item()
         print(cate, loss_att.item(), Kp_dis.item(), Kp_cent_dis.item(), loss_rot.item(),  loss_sep.item())
         # loss = loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis + loss_sep
         # score = (loss_att * 4.0 + Kp_dis * 3.0 + Kp_cent_dis).item()

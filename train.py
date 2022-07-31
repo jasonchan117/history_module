@@ -17,10 +17,10 @@ import matplotlib.pyplot as plt
 import cv2
 from torch.autograd import Variable
 from dataset.movi_loader import Dataset
-from models import KeypointGenerator
+
 from libs.network import KeyNet
 from libs.loss import Loss
-
+torch.multiprocessing.set_sharing_strategy('file_system')
 import warnings
 
 parser = argparse.ArgumentParser()
@@ -30,7 +30,7 @@ parser.add_argument('--dataset_root', type=str, default = '/media/lang/My Passpo
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
 parser.add_argument('--category', type=int, default = 14,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
-parser.add_argument('--workers', type=int, default = 30, help='number of data loading workers')
+parser.add_argument('--workers', type=int, default = 20, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
 parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
 parser.add_argument('--lr', default=0.0001, help='learning rate', type = float)
@@ -47,9 +47,9 @@ parser.add_argument('--score', default= np.Inf, type = float)
 opt = parser.parse_args()
 cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 
-models = {'6pack':KeyNet(opt.num_pt, opt.num_kp)}
+models = {'6pack':KeyNet(opt, opt.num_pt, opt.num_kp)}
 model = models[opt.model]
-model = model.float()
+model.float()
 model = model.cuda()
 
 if opt.resume != '':
@@ -71,20 +71,45 @@ for epoch in range(opt.begin, opt.epoch):
     optimizer.zero_grad()
     for i, data in enumerate(traindataloader, 0):
         print('Epoch:', epoch, 'batch:', i)
-        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
-        fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
-        #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
+        if opt.memory_size == 0:
+            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale  = data
+            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+            #print(fr_seg.shape, fr_frame.shape, fr_r.shape, fr_t.shape, fr_cloud.shape, fr_choose.shape)
 
+            kp_fr, anc_fr, att_fr, w = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+            kp_to, anc_to, att_to, w_1 = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+        else:
+            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale, fr_his_fr, choose_his_fr, cloud_his_fr, fr_his_to, choose_his_to, cloud_his_to = data
+            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t , to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda() , to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
 
-        kp_fr, anc_fr, att_fr, w = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
-        kp_to, anc_to, att_to, w_1 = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
+            for ind, his in enumerate(fr_his_fr):
+                fr_his_fr[ind] = fr_his_fr[ind].cuda()
+                choose_his_fr[ind] = choose_his_fr[ind].cuda()
+                cloud_his_fr[ind] = cloud_his_fr[ind].cuda()
+
+                fr_his_to[ind] = fr_his_to[ind].cuda()
+                choose_his_to[ind] = choose_his_to[ind].cuda()
+                cloud_his_to[ind] = cloud_his_to[ind].cuda()
+
+                img_feat_fr = model(fr_his_fr[ind], choose_his_fr[ind], cloud_his_fr[ind], re_img = True)
+                img_feat_to = model(fr_his_to[ind], choose_his_to[ind], cloud_his_to[ind], re_img = True)
+
+                if ind == 0:
+                    fr_feats = img_feat_fr.unsqueeze(1)
+                    to_feats = img_feat_to.unsqueeze(1)
+                else:
+                    fr_feats = torch.cat((fr_feats, img_feat_fr.unsqueeze(1)), dim = 1)
+                    to_feats = torch.cat((to_feats, img_feat_to.unsqueeze(1)), dim = 1)
+
+            kp_fr, anc_fr, att_fr, w = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t, his_feats = [fr_feats, cloud_his_fr])
+            kp_to, anc_to, att_to, w_1 = model(to_frame, to_choose, to_cloud, anchor, scale, to_t, his_feats = [to_feats, cloud_his_to])
 
         try:
             loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
             loss.backward()
         except:
-            print(w, w_1)
-            sys.exit()
+           print(w, w_1)
+           sys.exit()
 
         train_dis_avg += loss.item()
         train_count += 1
@@ -105,13 +130,42 @@ for epoch in range(opt.begin, opt.epoch):
         score = []
         for j, data in enumerate(testdataloader, 0):
             print('index:', j)
-            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = data
-            fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+            if opt.memory_size == 0:
+                fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = data
+                fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
 
-            kp_fr, anc_fr, att_fr, _ = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
-            kp_to, anc_to, att_to, _ = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
-            _, item_score = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
+                kp_fr, anc_fr, att_fr, _ = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t)
+                kp_to, anc_to, att_to, _ = model(to_frame, to_choose, to_cloud, anchor, scale, to_t)
 
+            else:
+                fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale, fr_his_fr, choose_his_fr, cloud_his_fr, fr_his_to, choose_his_to, cloud_his_to = data
+                fr_frame, fr_r, fr_t, fr_cloud, fr_choose, to_frame, to_r, to_t, to_cloud, to_choose, anchor, scale = fr_frame.cuda(), fr_r.cuda(), fr_t.cuda(), fr_cloud.cuda(), fr_choose.cuda(), to_frame.cuda(), to_r.cuda(), to_t.cuda(), to_cloud.cuda(), to_choose.cuda(), anchor.cuda(), scale.cuda()
+
+                for ind, his in enumerate(fr_his_fr):
+                    fr_his_fr[ind] = fr_his_fr[ind].cuda()
+                    choose_his_fr[ind] = choose_his_fr[ind].cuda()
+                    cloud_his_fr[ind] = cloud_his_fr[ind].cuda()
+
+                    fr_his_to[ind] = fr_his_to[ind].cuda()
+                    choose_his_to[ind] = choose_his_to[ind].cuda()
+                    cloud_his_to[ind] = cloud_his_to[ind].cuda()
+
+                    img_feat_fr = model(fr_his_fr[ind], choose_his_fr[ind], cloud_his_fr[ind], re_img=True)
+                    img_feat_to = model(fr_his_to[ind], choose_his_to[ind], cloud_his_to[ind], re_img=True)
+
+                    if ind == 0:
+                        fr_feats = img_feat_fr.unsqueeze(1)
+                        to_feats = img_feat_to.unsqueeze(1)
+                    else:
+                        fr_feats = torch.cat((fr_feats, img_feat_fr.unsqueeze(1)), dim=1)
+                        to_feats = torch.cat((to_feats, img_feat_to.unsqueeze(1)), dim=1)
+
+                kp_fr, anc_fr, att_fr, w = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t,
+                                                 his_feats=[fr_feats, cloud_his_fr])
+                kp_to, anc_to, att_to, w_1 = model(to_frame, to_choose, to_cloud, anchor, scale, to_t,
+                                                   his_feats=[to_feats, cloud_his_to])
+            _, item_score = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale,
+                                      opt.category)
             print(item_score)
             score.append(item_score)
         test_dis = np.mean(np.array(score))

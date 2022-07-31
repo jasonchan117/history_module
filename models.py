@@ -21,76 +21,89 @@ import copy
 from knn_cuda import KNN
 
 
-
 class Pseudo3DConv(nn.Module):
     def __init__(self, opt):
         super(Pseudo3DConv, self).__init__()
         self.opt = opt
-        self.knn = KNN(self.opt.topk)
+        self.np = 8
+        self.knn = KNN(self.np)
         self.conv1 = torch.nn.Conv1d(32, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128,1)
         self.psconv1 = torch.nn.Conv1d(128, 256, 1)
         self.psconv2 = torch.nn.Conv1d(256, 128, 1)
         self.pconv1 = torch.nn.Conv1d(3, 64, 1)
         self.pconv2 = torch.nn.Conv1d(64, 128, 1)
-        self.mp = torch.nn.MaxPool1d(self.opt.topk)
+        self.mp = torch.nn.AvgPool1d(self.np)
         self.sm = torch.nn.Softmax(dim = 1)
-        self.final_conv1 = torch.nn.Conv1d(256, 128, 1)
-        self.final_conv2 = torch.nn.Conv1d(256, 128, 1)
-        self.final_conv = torch.nn.Conv1d(416, 32, 1)
-    def forward(self, img_feat, cloud):
-        # img_feat:(1, 32, numpt), cloud:(1, numpt, 3)
+        self.final_conv1 = torch.nn.Conv1d(256, 64, 1)
+        self.final_conv2 = torch.nn.Conv1d(160, 64, 1)
+        self.final_conv = torch.nn.Conv1d(128, 64, 1)
+    def forward(self, img_feat, cloud, cloud_tar, same = False):
+
+        # img_feat:(ms, 32, numpt), cloud:(ms, numpt, 3)
         bs, di, _ = img_feat.size() # (1, 32, numpt)
-        cloud_tar = cloud
+
         cloud = cloud.transpose(2, 1).contiguous() #(1, 3, numpt)
         cloud_tar = cloud_tar.transpose(2, 1).contiguous()
+        _, inds = self.knn(cloud_tar, cloud)  # (ms, 8, numpt)
+        if same == True:
+            inds_tocloud = inds
+        else:
+            _ , inds_tocloud = self.knn(cloud, cloud_tar)
 
-        _, inds = self.knn(cloud, cloud_tar) #(1, 8, numpt)
         inds = inds.transpose(2, 1).contiguous() #(1, numpt, 8)
+        inds_tocloud = inds_tocloud.transpose(2, 1).contiguous() #(1, numpt, 8)
         img_feat = img_feat.transpose(2, 1) #(1, numpt, 32)
         cloud = cloud.transpose(2, 1).contiguous() #(1, numpt, 3)
         cloud_feat = cloud.transpose(2, 1).contiguous() #(1, 3, numpt)
         cloud_feat = self.pconv1(cloud_feat)
         cloud_feat = self.pconv2(F.leaky_relu(cloud_feat)) #(1, 128, numpt)
         cloud_feat = cloud_feat.transpose(2, 1).contiguous() #(1, numpt, 128)
-        for i, item in enumerate(inds[0]): # 1000
-            selected_feat = torch.index_select(img_feat, 1, item) #(1, 8, 32)
-            selected_feat_point = torch.index_select(cloud_feat, 1, item) #(1, 8, 128)
-            selected_feat_point = selected_feat_point.transpose(2, 1).contiguous() #(1, 128, 8)
-            selected_points = torch.index_select(cloud, 1, item) #(1, 8, 3)
-            current_point = cloud[0][i].view(1, 1, 3).repeat(1, self.opt.topk, 1).contiguous() #(1, 8, 3)
-            weight = self.sm(-1. * torch.norm(current_point - selected_points, dim = 2)) #(1, 8)
 
-            selected_feat = selected_feat.transpose(2, 1).contiguous()#(1, 32, 8)
-            selected_feat = self.conv1(selected_feat)# (1, 64, 8)
-            selected_feat = self.conv2(F.leaky_relu(selected_feat))# (1, 128, 8)
+        selected_feat = torch.gather(img_feat.transpose(2, 1).contiguous(), 2, inds.view(1, 1, -1).repeat(1, 32, 1).contiguous())  # (1, 32, 500 * 8)
 
-            selected_feat_point = self.psconv1(selected_feat_point)
-            selected_feat_point = self.psconv2(F.leaky_relu(selected_feat_point)) #(1, 128, 8)
+        selected_feat_point = torch.gather(cloud_feat.transpose(2, 1).contiguous(), 2, inds_tocloud.view(1, 1, -1).repeat(1, 128, 1).contiguous()) #(1, 128, 500 * 8)
+        selected_points = torch.gather(cloud_tar, 2, inds.view(1, 1, -1).repeat(1, 3, 1).contiguous()) # #(1, 3, 500 * 8)
+        selected_points_tocloud = torch.gather(cloud.transpose(2, 1).contiguous(), 2, inds_tocloud.view(1, 1, -1).repeat(1, 3, 1).contiguous())# #(1, 3, 500 * 8)
+        current_point = cloud.view(1, 3, 1, -1).repeat(1, 1, 8, 1).contiguous() # (1, 3, 8, 500)
+        current_point = current_point.transpose(3, 2).contiguous()
+        current_point = current_point.view(1, 3, -1).contiguous() # (1, 3, 500 * 8)
 
+        weight =  self.sm(-1. * torch.norm(current_point - selected_points, dim = 1).view(1, -1).contiguous()) # 1, 500 * 8
 
-            weight = weight.view(1, self.opt.topk, 1).repeat(1, 1, 128).contiguous() #(1, 8, 128)
-            weight = weight.transpose(2, 1).contiguous() #(1, 128, 8)
-            selected_feat_point = selected_feat_point * weight
-            selected_feat = selected_feat * weight
-            selected_feat = self.mp(selected_feat).view(1, 128).contiguous()
-            selected_feat_point = self.mp(selected_feat_point).view(1, 128).contiguous()
-            if i == 0:
-                suround_feat = selected_feat.unsqueeze(1) # (1, 1, 128)
-                suround_feat_p = selected_feat_point.unsqueeze(1)
-            else:
-                suround_feat = torch.cat((selected_feat, selected_feat.unsqueeze(1)), dim = 1)
-                suround_feat_p = torch.cat((selected_feat_point, selected_feat_point.unsqueeze(1)), dim = 1)
-        # suround_feat(1, numpt, 128)
-        # suround_feat_p (1, numpt, 128)
+        current_point_tocloud = cloud_tar.view(1, 3, 1, -1).repeat(1, 1, 8, 1).contiguous() # (1, 3, 8, 500)
+        current_point_tocloud = current_point_tocloud.transpose(3, 2).contiguous()
+        current_point_tocloud = current_point_tocloud.view(1, 3, -1).contiguous() # (1, 3, 500 * 8)
+        weight_tocloud = self.sm(-1. * torch.norm(current_point_tocloud - selected_points_tocloud, dim=1).view(1, -1).contiguous())
 
-        suround_feat = suround_feat.transpose(2, 1).contiguous() #(1, 128, numpt)
-        suround_feat_p = suround_feat_p.transpose(2, 1).contiguous()
+        selected_feat = self.conv1(selected_feat)  # (1, 64, 500*8)
+        selected_feat = self.conv2(F.leaky_relu(selected_feat))  # (1, 128, 500*8)
+
+        selected_feat_point = self.psconv1(selected_feat_point)
+        selected_feat_point = self.psconv2(F.leaky_relu(selected_feat_point))  # (1, 128, 500*8)
+
+        weight = weight.unsqueeze(1).repeat(1, 128, 1).contiguous()
+        weight_tocloud = weight_tocloud.unsqueeze(1).repeat(1, 128, 1).contiguous()
+        selected_feat = selected_feat * weight# (1, 128, 500*8)
+        selected_feat_point = selected_feat_point * weight_tocloud ## (1, 128, 500*8)
+
+        selected_feat = selected_feat.view(1, 128, 500, self.np).contiguous()
+        selected_feat_point = selected_feat_point.view(1, 128, 500, self.np).contiguous()
+
+        selected_feat = self.mp(selected_feat.view(1, 128 * 500, self.np).contiguous()).view(1, 128, 500).contiguous()
+        selected_feat_point = self.mp(selected_feat_point.view(1, 128 * 500, self.np).contiguous()).view(1, 128, 500).contiguous()
+
+        suround_feat = selected_feat
+        suround_feat_p = selected_feat_point
         final1 = torch.cat((suround_feat, cloud_feat.transpose(2, 1).contiguous()), dim = 1) #(1, 256, numpt) collecting closest pixels.
         final2 = torch.cat((suround_feat_p, img_feat.transpose(2, 1).contiguous()), dim = 1) #(1, 160, numpt) collecting closest points in the point cloud
-        final = torch.cat((final2, final1), dim = 1) # (1, 256, 160)
-        final = self.final_conv(F.leaky_relu(final)) #(1, 32, numpt)
+        final1 = self.final_conv1(final1) # (1, 64, numpt)
+        final2 = self.final_conv2(final2) # (1, 64, numpt)
+        final = torch.cat((final2, final1), dim = 1) # (1, 128, 160)
+        final = self.final_conv(F.leaky_relu(final)) #(1, 64, numpt)
+
         return final
+
 '''
 Temporal relation module in TF-Blender
 '''
@@ -158,69 +171,5 @@ class FeatureAdjustment(nn.Module):
             else:
                 Fs = torch.cat((Fs, sum_nei.unsqueeze(0)), dim = 0 )
         return Fs #(ms, bs, 160)
-
-
-psp_models = {
-    'resnet18': lambda: PSPNet(sizes=(1, 2, 3, 6), psp_size=512, deep_features_size=256, backend='resnet18'),
-}
-
-class ModifiedResnet(nn.Module):
-
-    def __init__(self):
-        super(ModifiedResnet, self).__init__()
-
-        self.model = psp_models['resnet18'.lower()]()
-        self.model = nn.DataParallel(self.model)
-
-    def forward(self, x):
-        x = self.model(x)
-        return x
-class KeypointGenerator(nn.Module):
-    def __init__(self, opt):
-        super(KeypointGenerator, self).__init__()
-        self.opt = opt
-        self.cnn = ModifiedResnet()
-        self.fusion = Pseudo3DConv(opt)
-        self.sm = torch.nn.Softmax(dim = 1)
-        self.conv_dis1 = torch.nn.Conv1d(128, 64, 3, padding = 1)
-        self.conv_dis2 = torch.nn.Conv1d(64, 32, 1)
-        self.conv_dis3 = torch.nn.Conv1d(32, 1, 1)
-        self.conv_seg1 = torch.nn.Conv1d(128, 64, 3, padding = 1)
-        self.conv_seg2 = torch.nn.Conv1d(64, 32, 1)
-        self.conv_seg3 = torch.nn.Conv1d(32, 1, 1)
-        self.lin1 = nn.Linear(128, 90)
-        self.lin2 = nn.Linear(90, 64)
-        self.lin3 = nn.Linear(64, 3 * opt.num_kp)
-    def forward(self, seg, img, cloud, choose, t):
-        # t: (1, 3)
-        img = self.cnn(img)
-        bs, di, _, _ = img.size() # (1, 32, h, w)
-        img = img.view(bs, di, -1)
-        choose = choose.repeat(1, di, 1)
-        img = torch.gather(img, 2, choose).contiguous() # (1, 32, num_pt)
-
-        fused_feat = self.fusion(img, cloud) # (1, 128, numpt)
-        seg_pre = self.conv_seg3(F.leaky_relu(self.conv_seg2(F.leaky_relu(self.conv_seg1(fused_feat))))).view(1, self.opt.num_pt).contiguous()
-
-        dis_center = (t * -1.).view(1, 1, 3).repeat(1, self.opt.num_pt, 1).contiguous()#(1, numpt, 3)
-        dis_center = self.sm(torch.norm(cloud - dis_center, 2).view(1, self.opt.num_pt).contiguous()) #(1, numpt) the farther the point from the center the higher weight
-        center_weight = dis_center.unsqueeze(1).repeat(1, 128, 1).contiguous() #(1, 128, numpt)
-
-        dis_pre = self.conv_dis3(F.leaky_relu(self.conv_dis2(F.leaky_relu(self.conv_dis1(fused_feat))))).view(1, self.opt.num_pt).contiguous() #(1, numpt)
-
-
-
-        fused_feat *= center_weight #(1, 128, numpt)
-
-
-
-        seg = seg.view(1, 1, self.opt.num_pt).repeat(1, 128, 1).contiguous()
-        fused_feat *= seg #(1, 128, numpt)
-        fused_feat = torch.sum(fused_feat, 2).view(1, 128).contiguous()
-
-        keypoints = self.lin3(F.leaky_relu(self.lin2(F.leaky_relu(self.lin1(fused_feat))))).view(1, self.opt.num_kp, 3) #(1, 8, 3)
-
-        return keypoints, dis_pre, dis_center, seg_pre
-
 
 

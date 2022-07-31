@@ -31,7 +31,7 @@ c = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camer
 class Dataset(data.Dataset):
     def __init__(self, opt, mode = 'train', length = 5000, eval = False):
         self.ms = opt.memory_size
-        self.padding = 10
+        self.padding = 3
         self.eval = eval
         self.num_pt = opt.num_pt
         self.opt = opt
@@ -231,14 +231,15 @@ class Dataset(data.Dataset):
 
         minv, maxv = np.load(os.path.join(video_path, 'depth_range' + '.npy'))
         # depth = np.round(np.sqrt((cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0][:, :, np.newaxis] / 65535).clip(0, 1.)) * 255).astype(np.uint8)
-        depth = cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0] * 256 / 65535. * (maxv - minv) + minv
+        depth = cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0] * 256. / 65535. * (maxv - minv) + minv
         # depth = cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 0]
         # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 0])
         #
         # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 1])
         if eval == True:
             bb3d = (bb3d - current_t) @ current_r # Object space
-
+        # else:
+        #     bb3d = (bb3d - t) @ r # Object space
         '''
         Depth test
         '''
@@ -256,9 +257,12 @@ class Dataset(data.Dataset):
         Testing plot
         '''
         # fig, ax = plt.subplots(1)
-        # print('>>>', sample['video'][index].shape)
-        # ax.imshow(sample['video'][index])
-        # ax.imshow(sample['video'][index][miny: maxy, minx: maxx])
+        #
+        # ax.imshow(cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png')))
+        #
+        # # ax.imshow(depth[:, np.newaxis][miny: maxy, minx: maxx])
+        # rect = matplotlib.patches.Rectangle([minx, miny], maxx-minx, maxy-miny, linewidth =1, edgecolor = 'red', facecolor = 'none')
+        # ax.add_patch(rect)
         # plt.show()
         return bb3d , np.transpose(cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png'))[miny: maxy, minx: maxx] / 255., (2, 0, 1)), depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
 
@@ -389,12 +393,16 @@ class Dataset(data.Dataset):
                 centers = np.load(os.path.join(video_path, 'centers.npy'))
                 category = np.load(os.path.join(video_path, 'category.npy'))
 
-                flag = 0
                 if self.ms != 0:
-                    fr_his = []
-                    choose_his = []
-                    cloud_his = []
-                    t_his = []
+                    fr_his_fr = []
+                    choose_his_fr = []
+                    cloud_his_fr = []
+
+                    fr_his_to = []
+                    choose_his_to = []
+                    cloud_his_to = []
+
+
 
                 if self.cate not in category:
                     continue
@@ -405,36 +413,27 @@ class Dataset(data.Dataset):
                     # try:
 
                     if len(bbox_frames[in_cate]) < self.ms + 2:
-                        flag = 1
-                        break
-                    choose_frame = random.sample(range(24), 2)
-                    if choose_frame[0] >= choose_frame[1]:
-                        continue
-                    if choose_frame[0] not in bbox_frames[in_cate] or choose_frame[1] not in bbox_frames[in_cate]:
-                        continue
-                    if choose_frame[0] < self.ms:
-                        continue
-                    if self.ms > 0  and list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) < self.ms :
-                        continue
-
-                    if centers[in_cate][choose_frame[0]][0] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[0]][1] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[0]][1] * 256. >= 255 - self.padding or centers[in_cate][choose_frame[0]][0] * 256. >= 255 - self.padding:
 
                         sys.exit()
-                    if centers[in_cate][choose_frame[1]][0] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[1]][1] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[1]][1] * 256. >= 255 - self.padding or centers[in_cate][choose_frame[1]][0] * 256. >= 255 - self.padding:
+                    choose_frame = random.sample(list(bbox_frames[in_cate])[self.ms:], 2)
+                    if choose_frame[0] == choose_frame[1]:
 
-                        sys.exit()
-                    '''
-                    Obtaining historical frames (Remember to add limit)
-                    '''
-                    for m in range(self.ms):
-                        his_index = bbox_frames[list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) - self.ms - m]
-                        _ ,  his_frame, his_depth, his_miny, his_maxy, his_minx, his_maxx = self.get_frame(his_index, video_path, in_cate)
-                        _, his_t = self.get_pose(in_cate, his_index, video_path)
-                        his_cloud, his_choose = self.get_cloud(his_depth, his_miny, his_maxy, his_minx, his_maxx, video_path, his_index)
-                        fr_his.append(self.norm(torch.from_numpy(his_frame.astype(np.float32))))
-                        choose_his.append(torch.LongTensor(his_choose.astype(np.float32)))
-                        cloud_his.append(torch.from_numpy(his_cloud.astype(np.float32)))
-                        t_his.append(torch.from_numpy(his_t.astype(np.float32)))
+                        continue
+                    # if choose_frame[0] >= choose_frame[1]:
+                    #     continue
+                    # if choose_frame[0] not in bbox_frames[in_cate] or choose_frame[1] not in bbox_frames[in_cate]:
+                    #     continue
+
+                    # if self.ms > 0  and list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) < self.ms :
+                    #     continue
+
+                    # if centers[in_cate][choose_frame[0]][0] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[0]][1] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[0]][1] * 256. >= 255 - self.padding or centers[in_cate][choose_frame[0]][0] * 256. >= 255 - self.padding:
+                    #     print(1)
+                    #     sys.exit()
+                    # if centers[in_cate][choose_frame[1]][0] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[1]][1] * 256. <= 1 + self.padding or centers[in_cate][choose_frame[1]][1] * 256. >= 255 - self.padding or centers[in_cate][choose_frame[1]][0] * 256. >= 255 - self.padding:
+                    #     print(1)
+                    #     sys.exit()
+
 
                     '''
                     Obtaining current and next frames index, video_path, in_cate
@@ -467,13 +466,42 @@ class Dataset(data.Dataset):
 
                     # np.set_printoptions(threshold = np.inf)
                     fr_cloud, to_cloud = self.change_to_scale(scale, fr_cloud, to_cloud)
-                    # except:
-                    #     # print('loader error')
-                    #     continue
-                    break
+                    '''
+                    Obtaining historical frames (Remember to add limit)
+                    '''
+                    for m in range(self.ms):
+                        # his_index = bbox_frames[list(bbox_frames[in_cate].numpy()).index(choose_frame[0]) - self.ms - m]
 
-                if flag == 1:
-                    continue
+                        his_index_fr = bbox_frames[in_cate][bbox_frames[in_cate].index(choose_frame[0]) - self.ms + m]
+                        his_index_to = bbox_frames[in_cate][bbox_frames[in_cate].index(choose_frame[1]) - self.ms + m]
+
+                        bb3_fr, his_frame_fr, his_depth_fr, his_miny_fr, his_maxy_fr, his_minx_fr, his_maxx_fr = self.get_frame(
+                            his_index_fr, video_path, in_cate)
+
+                        bb3_to, his_frame_to, his_depth_to, his_miny_to, his_maxy_to, his_minx_to, his_maxx_to = self.get_frame(
+                            his_index_to, video_path, in_cate)
+
+                        his_cloud_fr, his_choose_fr = self.get_cloud(his_depth_fr, his_miny_fr, his_maxy_fr,
+                                                                     his_minx_fr, his_maxx_fr, video_path, his_index_fr,
+                                                                     limit=self.search_fit(bb3_fr))
+                        his_cloud_to, his_choose_to = self.get_cloud(his_depth_to, his_miny_to, his_maxy_to,
+                                                                     his_minx_to, his_maxx_to, video_path, his_index_to,
+                                                                     limit=self.search_fit(bb3_to))
+
+                        his_cloud_fr /= self.dis_scale
+                        his_cloud_to /= self.dis_scale
+
+                        his_cloud_fr = self.divide_scale(scale, his_cloud_fr)
+                        his_cloud_to = self.divide_scale(scale, his_cloud_to)
+
+                        fr_his_fr.append(self.norm(torch.from_numpy(his_frame_fr.astype(np.float32))))
+                        choose_his_fr.append(torch.LongTensor(his_choose_fr.astype(np.float32)))
+                        cloud_his_fr.append(torch.from_numpy(his_cloud_fr.astype(np.float32)))
+
+                        fr_his_to.append(self.norm(torch.from_numpy(his_frame_to.astype(np.float32))))
+                        choose_his_to.append(torch.LongTensor(his_choose_to.astype(np.float32)))
+                        cloud_his_to.append(torch.from_numpy(his_cloud_to.astype(np.float32)))
+                    break
             except:
                 continue
             break
@@ -486,8 +514,8 @@ class Dataset(data.Dataset):
                                        torch.from_numpy(to_r.astype(np.float32)),\
                                        torch.from_numpy(to_t.astype(np.float32)),\
                                        torch.from_numpy(to_cloud.astype(np.float32)),\
-                                       torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float)), fr_his, choose_his, cloud_his,\
-                                       t_his
+                                       torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float32)), fr_his_fr, choose_his_fr, cloud_his_fr,\
+                                        fr_his_to, choose_his_to, cloud_his_to
         else:
             return  self.norm(torch.from_numpy(fr_frame.astype(np.float32))), torch.from_numpy(fr_r.astype(np.float32)),\
                              torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)),\
