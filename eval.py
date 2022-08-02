@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import cv2
 from torch.autograd import Variable
 from dataset.movi_loader import Dataset
-from models import KeypointGenerator
+
 from libs.network import KeyNet
 from libs.loss import Loss
 from benchmark import benchmark
@@ -41,7 +41,7 @@ parser.add_argument('--memory_size', default=0, type = int)
 
 opt = parser.parse_args()
 
-model = KeyNet(num_points = opt.num_pt, num_key = opt.num_kp)
+model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
 model = model.float()
 model.cuda()
 model.eval()
@@ -60,33 +60,63 @@ while(test_dataset.current_video_num <= opt.video_num):
     '''
     Video
     '''
-
+    if test_dataset.check_frame_len() == False:
+        test_dataset.next_video()
+    if test_dataset.index == 0:
+        test_dataset.init_his()
     current_r, current_t = test_dataset.get_current_pose()
     while (True):
         try:
+
             img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
         except:
             test_dataset.update_frame()
             continue
         break
+
     img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
-    Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
+    if len(test_dataset.fr_his) == 0:
+        Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
+    else:
+        for ind, his in enumerate(test_dataset.fr_his):
+            img_feat = model.eval_forward(test_dataset.fr_his[ind], test_dataset.choose_his[ind],
+                                          test_dataset.cloud_his[ind], None, None, 0.0, re_img=True, first=False)
+
+            if ind == 0:
+                feats = img_feat.unsqueeze(1)
+            else:
+                feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
+        Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
+                                           his_feats=[feats, test_dataset.cloud_his])
+        test_dataset.update_sequence(img, choose, cloud)
     min_dis = 0.0005
     while(True):
         print('Video index:', test_dataset.current_video_num, 'Frame index:', test_dataset.index)
         '''
         Per frame in the video.
         '''
+
         try:
             if test_dataset.update_frame():
                 break
-
             img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
             img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
         except:
             continue
-        Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, False)
+        if len(test_dataset.fr_his) == 0:
+            Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first = False)
+        else:
+            for ind, his in enumerate(test_dataset.fr_his):
+                img_feat = model.eval_forward(test_dataset.fr_his[ind], test_dataset.choose_his[ind], test_dataset.cloud_his[ind], None, None, min_dis, re_img= True, first=False)
 
+                if ind == 0:
+                    feats = img_feat.unsqueeze(1)
+                else:
+                    feats = torch.cat((feats, img_feat.unsqueeze(1)), dim = 1)
+
+            Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False, his_feats=[feats, test_dataset.cloud_his])
+
+        test_dataset.update_sequence(img, choose, cloud)
         min_dis = 1000
         lenggth = len(Kp_to)
         for idx in range(lenggth):

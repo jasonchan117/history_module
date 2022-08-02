@@ -48,6 +48,7 @@ class Dataset(data.Dataset):
         self.norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         if self.eval == True:
+            # History sequence
             self.fr_his = []
             self.choose_his = []
             self.cloud_his = []
@@ -60,11 +61,60 @@ class Dataset(data.Dataset):
 
             # visible_sequence = np.load(os.path.join(video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
             # current_frame_index = visible_sequence[self.seq_index]
+
+    def check_frame_len(self):
+        visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[
+            self.obj_index]
+
+        if len(visible_sequence) <= self.opt.memory_size:
+            return False
+        return True
+    def next_video(self):
+        self.fr_his = []
+        self.choose_his = []
+        self.cloud_his = []
+
+        self.index = 0
+        self.current_video_num += 1
+        self.video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category],
+                                       str(self.current_video_num))
+        category = np.load(os.path.join(self.video_path, 'category.npy'))
+        self.obj_index = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
+    def init_his(self):
+
+        for i in range(self.opt.memory_size):
+            while(True):
+                r, t = self.get_current_pose()
+                try:
+                    img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = self.get_next(r, t)
+                except:
+                    self.update_frame()
+                    continue
+                self.fr_his.append(img.cuda())
+                self.choose_his.append(choose.cuda())
+                self.cloud_his.append(cloud.cuda())
+                self.update_frame()
+                break
+    def update_sequence(self, frame, choose, cloud):
+
+        self.fr_his.append(frame)
+        self.choose_his.append(choose)
+        self.cloud_his.append(cloud)
+        if len(self.fr_his) > self.opt.memory_size:
+
+            self.fr_his.pop(0)
+            self.choose_his.pop(0)
+            self.cloud_his.pop(0)
     def update_frame(self):
         self.index += 1
         visible_sequence = np.load(os.path.join(self.video_path, 'bbox_frames_n.npy'), allow_pickle=True)[self.obj_index]
 
         if self.index >= len(visible_sequence): # Next video
+            self.fr_his = []
+            self.choose_his = []
+            self.cloud_his = []
+
+
             self.index = 0
             self.current_video_num += 1
             self.video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
