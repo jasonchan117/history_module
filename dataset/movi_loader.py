@@ -42,12 +42,16 @@ class Dataset(data.Dataset):
         self.dis_scale = 10.
         self.cate = opt.category
         self.intrinsics = np.array([[280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]])
-        self.border_list = [-1, 80, 120, 160, 200, 240, 280]
+        self.border_list = [-1, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280]
         self.xmap = np.array([[j for i in range(256)] for j in range(256)])
         self.ymap = np.array([[i for i in range(256)] for j in range(256)])
         self.norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         if self.eval == True:
+            self.fr_his = []
+            self.choose_his = []
+            self.cloud_his = []
+
             self.current_video_num = 0
             self.index = 0
             self.video_path = os.path.join(self.opt.dataset_root, self.mode, c[self.opt.category], str(self.current_video_num))
@@ -230,12 +234,8 @@ class Dataset(data.Dataset):
         miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t, eval = ev)
 
         minv, maxv = np.load(os.path.join(video_path, 'depth_range' + '.npy'))
-        # depth = np.round(np.sqrt((cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0][:, :, np.newaxis] / 65535).clip(0, 1.)) * 255).astype(np.uint8)
         depth = cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0] * 256. / 65535. * (maxv - minv) + minv
-        # depth = cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 0]
-        # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 0])
-        #
-        # print(cv.imread(os.path.join(video_path, 'depth_' + str(index) + '.png'))[:, :, 1])
+
         if eval == True:
             bb3d = (bb3d - current_t) @ current_r # Object space
         # else:
@@ -307,11 +307,6 @@ class Dataset(data.Dataset):
         else:
             cloud = cloud @ camera_r.T + camera_t # world space
 
-        # print((cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]))
-        # print('-----------------')
-        # print((cloud[:, 1] > limit[2]) * (cloud[:, 1] < limit[3]))
-        # print('-----------------')
-        # print((cloud[:, 2] > limit[4]) * (cloud[:, 2] < limit[5]))
 
         choose_temp = (cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]) * (cloud[:, 1] > limit[2]) * (cloud[:, 1] < limit[3]) * (cloud[:, 2] > limit[4]) * (cloud[:, 2] < limit[5])
         # np.set_printoptions(threshold = np.inf)
@@ -413,8 +408,8 @@ class Dataset(data.Dataset):
                     # try:
 
                     if len(bbox_frames[in_cate]) < self.ms + 2:
-
                         sys.exit()
+
                     choose_frame = random.sample(list(bbox_frames[in_cate])[self.ms:], 2)
                     if choose_frame[0] == choose_frame[1]:
 

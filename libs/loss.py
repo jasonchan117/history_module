@@ -171,9 +171,9 @@ class Loss(_Loss):
             frob_sqr = torch.sum(((pred_r - rot) * (pred_r - rot)).view(-1)).contiguous()
             frob = torch.sqrt(frob_sqr).unsqueeze(0).contiguous()
             # cc = torch.cat([self.oneone, frob / (2 * math.sqrt(2))]).contiguous()
-            loss_rot = 2. * frob
+            loss_rot = frob /  math.sqrt(2)
             # loss_rot = 2. * torch.mean(torch.asin(torch.min(cc))).contiguous()
-
+            # loss_rot = 2. * torch.mean(torch.asin(frob / (2 * math.sqrt(2)))).contiguous()
 
 
         ############# Separate Loss

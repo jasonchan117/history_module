@@ -123,33 +123,29 @@ class KeyNet(nn.Module):
             c_cloud = x
             his_imgs = his_feats[0].transpose(1, 0).contiguous() # (ms, bs, 32, 500)
             his_clouds = his_feats[1]
-
-            '''
-            Local Difference
-            '''
-            for i in range(len(his_clouds) - 1):
-                indv = len(his_clouds) - i - 1
-                if i == 0:
-                    dens_feat_s = self.feat2(his_clouds[indv].transpose(2, 1), his_imgs[indv])  # (1, 160, 500)
-                dens_feat_f = self.feat2(his_clouds[indv-1].transpose(2, 1), his_imgs[indv-1])
-                feat = self.p3d(his_imgs[indv - 1], his_clouds[indv - 1], his_clouds[indv - 1], same=True)
-                feat1 = self.p3d(his_imgs[indv - 1], his_clouds[indv], his_clouds[indv - 1])
-                feat2 = self.p3d(his_imgs[indv], his_clouds[indv - 1], his_clouds[indv])
-                dens_feat_s = self.diff3(F.sigmoid(self.diff1((feat - feat1 + feat - feat2) / 2.)) * dens_feat_s + dens_feat_f)  # (1, 160, 500)
-
-            dens_feat = self.feat2(c_cloud.transpose(2, 1), c_img)
-            featc = self.p3d(c_img, c_cloud, c_cloud, same=True)  # (1, 64, 500)
-            feat1 = self.p3d(c_img, his_clouds[0], c_cloud)
-            feat2 = self.p3d(his_imgs[0], c_cloud, his_clouds[0])
-            dens_feat = self.diff3(F.sigmoid(self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_s + dens_feat)  # (1, 160, 500)
-
             '''
             Global Difference
             '''
             featc = self.p3d(c_img, c_cloud, c_cloud, same=True)  # (1, 64, 500)
             dens_feat_c = self.feat2(c_cloud.transpose(2, 1), c_img)
+            '''
+            Local Difference
+            '''
 
-            for i in range(len(his_clouds)):
+            for i in range(len(his_clouds) - 1):
+                # indv = len(his_clouds) - i - 1
+                indv = i + 1
+                if i == 0:
+                    dens_feat_f = self.feat2(his_clouds[indv - 1].transpose(2, 1), his_imgs[indv - 1])
+                dens_feat_s = self.feat2(his_clouds[indv].transpose(2, 1), his_imgs[indv])  # (1, 160, 500)
+
+                feat = self.p3d(his_imgs[indv], his_clouds[indv], his_clouds[indv], same=True)
+                feat1 = self.p3d(his_imgs[indv - 1], his_clouds[indv], his_clouds[indv - 1])
+                feat2 = self.p3d(his_imgs[indv], his_clouds[indv - 1], his_clouds[indv])
+                dens_feat_f = self.diff3(F.sigmoid(self.diff1((feat - feat1 + feat - feat2) / 2.)) * dens_feat_f + dens_feat_s)  # (1, 160, 500)
+                '''
+                Global Difference
+                '''
                 dens_feat_t = self.feat2(his_clouds[i].transpose(2, 1), his_imgs[i])
                 feat1 = self.p3d(c_img, his_clouds[i], c_cloud)
                 feat2 = self.p3d(his_imgs[i], c_cloud, his_clouds[i])
@@ -159,6 +155,27 @@ class KeyNet(nn.Module):
                 else:
                     sum = torch.cat((sum, self.diff3(F.sigmoid(
                         self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_t + dens_feat_c).unsqueeze(1)), dim = 1)
+            '''
+            Global Difference
+            '''
+            dens_feat_t = self.feat2(his_clouds[len(his_clouds)-1].transpose(2, 1), his_imgs[len(his_clouds)-1])
+            feat1 = self.p3d(c_img, his_clouds[len(his_clouds)-1], c_cloud)
+            feat2 = self.p3d(his_imgs[len(his_clouds)-1], c_cloud, his_clouds[len(his_clouds)-1])
+            sum = torch.cat((sum, self.diff3(F.sigmoid(
+                self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_t + dens_feat_c).unsqueeze(1)), dim=1)
+
+            '''
+            Local Difference
+            '''
+            # dens_feat = self.feat2(c_cloud.transpose(2, 1), c_img)
+            # featc = self.p3d(c_img, c_cloud, c_cloud, same=True)  # (1, 64, 500)
+            feat1 = self.p3d(c_img, his_clouds[len(his_clouds)-1], c_cloud)
+            feat2 = self.p3d(his_imgs[len(his_clouds)-1], c_cloud, his_clouds[len(his_clouds)-1])
+            dens_feat = self.diff3(F.sigmoid(self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_f + dens_feat_c)  # (1, 160, 500)
+
+
+
+
             sum = torch.sum(sum, dim = 1).view(1, 160, 500)
             dens_feat = self.diff4(torch.cat((sum, dens_feat), dim = 1)) # (1, 160, 500)
 
