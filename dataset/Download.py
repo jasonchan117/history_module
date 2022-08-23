@@ -10,7 +10,7 @@ ds = tfds.load("movi_e", data_dir="gs://kubric-public/tfds", shuffle_files=False
 ds_train = iter(tfds.as_numpy(ds['train']))
 ds_test = iter(tfds.as_numpy(ds['test']))
 dir = '/media/lang/My Passport/Dataset/MOvi/' + mode
-cate = 14
+cate = 1
 cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 
 
@@ -32,7 +32,7 @@ while(True):
     bbox_frames = sample["instances"]["bbox_frames"]
     category = sample['instances']['category']
     centers = sample["instances"]["image_positions"]
-    # if video_id <= 1580:
+    # if video_id <= 1761:
     #     if cate in category:
     #         video_id += 1
     #     print(video_id)
@@ -67,6 +67,6 @@ while(True):
                           sample['camera']['quaternions'][ind][2],
                           sample['camera']['quaternions'][ind][3])))
         np.save(os.path.join(dir, cates[cate], str(video_id), 'cam_t_' + str(ind) +'.npy'), sample['camera']['positions'][ind])
-    if video_id == 975:
-        break
+    # if video_id == 975:
+    #     break
     video_id += 1

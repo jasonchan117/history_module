@@ -31,10 +31,13 @@ psp_models = {
 
 class ModifiedResnet(nn.Module):
 
-    def __init__(self, usegpu=True):
+    def __init__(self, opt):
         super(ModifiedResnet, self).__init__()
+        if opt.deeper == True:
+            self.model = psp_models['resnet34'.lower()]()
+        else:
+            self.model = psp_models['resnet18'.lower()]()
 
-        self.model = psp_models['resnet18'.lower()]()
         # self.model = nn.DataParallel(self.model)
 
     def forward(self, x):
@@ -43,32 +46,66 @@ class ModifiedResnet(nn.Module):
 
 
 class PoseNetFeat(nn.Module):
-    def __init__(self, num_points):
+    def __init__(self, num_points, opt):
         super(PoseNetFeat, self).__init__()
+        # if opt.deeper == True:
+        #     mid_feat = 128
+        # else:
+        self.opt = opt
         self.conv1 = torch.nn.Conv1d(3, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128, 1)
+        if opt.deeper == True:
+
+            self.conv3 = torch.nn.Conv1d(128, 256, 1)
+            self.conv4 = torch.nn.Conv1d(256, 320, 1)
 
         self.e_conv1 = torch.nn.Conv1d(32, 64, 1)
         self.e_conv2 = torch.nn.Conv1d(64, 128, 1)
-
+        if opt.deeper == True:
+            self.e_conv3 = torch.nn.Conv1d(128, 256, 1)
+            self.e_conv4 = torch.nn.Conv1d(256, 320, 1)
+            self.conv6 = torch.nn.Conv1d(512, 180, 1)
+            self.conv7 = torch.nn.Conv1d(640, 180, 1)
+            o = 1000
+            s = 200
+        else:
+            o = 640
+            s = 160
         self.conv5 = torch.nn.Conv1d(256, 256, 1)
 
-        self.all_conv1 = torch.nn.Conv1d(640, 320, 1)
-        self.all_conv2 = torch.nn.Conv1d(320, 160, 1)
+        self.all_conv1 = torch.nn.Conv1d(o, 320, 1)
+        self.all_conv2 = torch.nn.Conv1d(320, s, 1)
 
         self.num_points = num_points
 
     def forward(self, x, emb):
         x = F.relu(self.conv1(x))
         emb = F.relu(self.e_conv1(emb))
-        pointfeat_1 = torch.cat((x, emb), dim=1)
+        pointfeat_1 = torch.cat((x, emb), dim=1) # (1, 128, 500)
+
 
         x = F.relu(self.conv2(x))
         emb = F.relu(self.e_conv2(emb))
-        pointfeat_2 = torch.cat((x, emb), dim=1)
+        pointfeat_2 = torch.cat((x, emb), dim=1) # (1, 256, 500)
+        if self.opt.deeper == True:
+            x = F.leaky_relu(self.conv3(x))
+            emb = F.leaky_relu(self.e_conv3(emb))
+
+            pointfeat_3 = torch.cat((x, emb), dim = 1)# (1, 512, 500)
+            pointfeat_3 = F.leaky_relu(self.conv6(pointfeat_3)) #(1, 180, 500)
+
+            x = F.leaky_relu(self.conv4(x))
+            emb = F.leaky_relu(self.e_conv4(emb))
+
+            pointfeat_4 = torch.cat((x, emb), dim = 1)# (1, 640, 500)
+            pointfeat_4 = F.leaky_relu(self.conv7(pointfeat_4))  # (1, 180, 500)
 
         x = F.relu(self.conv5(pointfeat_2))
-        x = torch.cat([pointfeat_1, pointfeat_2, x], dim=1).contiguous()  # 128 + 256 + 256
+        if self.opt.deeper == True:
+            x = torch.cat([pointfeat_1, pointfeat_2, pointfeat_3, pointfeat_4, x ,], dim=1).contiguous()  # 128 + 256 + 256 + 180 + 180 = 1000
+
+        else:
+            x = torch.cat([pointfeat_1, pointfeat_2, x], dim=1).contiguous()  # 128 + 256 + 256
 
         x = F.leaky_relu(self.all_conv1(x))
         x = self.all_conv2(x)
@@ -81,16 +118,24 @@ class KeyNet(nn.Module):
         super(KeyNet, self).__init__()
         self.opt = opt
         self.num_points = num_points
-        self.cnn = ModifiedResnet()
-        self.feat = PoseNetFeat(num_points)
-        self.feat2 = PoseNetFeat(num_points)
+        self.cnn = ModifiedResnet(opt)
+        self.feat = PoseNetFeat(num_points, opt)
+        self.feat2 = PoseNetFeat(num_points, opt)
 
         self.sm = torch.nn.Softmax(dim=2)
 
-        self.kp_1 = torch.nn.Conv1d(160, 90, 1)
-        self.kp_2 = torch.nn.Conv1d(90, 3 * num_key, 1)
-
-        self.att_1 = torch.nn.Conv1d(160, 90, 1)
+        if opt.deeper == True:
+            mid_feat = 256
+            self.kp_1 = torch.nn.Conv1d(200, mid_feat, 1)
+            self.kp_2 = torch.nn.Conv1d(90, 3 * num_key, 1)
+            self.kp_3 = torch.nn.Conv1d(mid_feat, 128, 1)
+            self.kp_4 = torch.nn.Conv1d(128, 90, 1)
+            self.c_f = 200
+        else:
+            self.kp_1 = torch.nn.Conv1d(160, 90, 1)
+            self.kp_2 = torch.nn.Conv1d(90, 3 * num_key, 1)
+            self.c_f = 160
+        self.att_1 = torch.nn.Conv1d(self.c_f, 90, 1)
         self.att_2 = torch.nn.Conv1d(90, 1, 1)
 
         self.sm2 = torch.nn.Softmax(dim=1)
@@ -101,10 +146,10 @@ class KeyNet(nn.Module):
             1, self.num_points, 1)
         if self.opt.memory_size != 0 :
             self.p3d = Pseudo3DConv(opt)
-            self.diff1 = torch.nn.Conv1d( 64, 160, 1)
-            self.diff2 = torch.nn.Conv1d( 320, 160, 1)
-            self.diff3 = torch.nn.Conv1d(160, 160, 1)
-            self.diff4 = torch.nn.Conv1d(320, 160, 1)
+            self.diff1 = torch.nn.Conv1d( 64, self.c_f, 1)
+            self.diff2 = torch.nn.Conv1d( 2 * self.c_f, self.c_f, 1)
+            self.diff3 = torch.nn.Conv1d(self.c_f, self.c_f, 1)
+            self.diff4 = torch.nn.Conv1d(2 * self.c_f, self.c_f, 1)
 
 
     def forward(self, img, choose, x, anchor = None, scale = None, gt_t = None, re_img = False, his_feats = None):
@@ -176,7 +221,8 @@ class KeyNet(nn.Module):
 
 
 
-            sum = torch.sum(sum, dim = 1).view(1, 160, 500)
+            sum = torch.sum(sum, dim = 1).view(1, self.c_f, 500)
+
             dens_feat = self.diff4(torch.cat((sum, dens_feat), dim = 1)) # (1, 160, 500)
 
         emb = emb.repeat(1, 1, num_anc).contiguous()
@@ -190,22 +236,25 @@ class KeyNet(nn.Module):
         x = x.transpose(2, 1).contiguous()
         feat_x = self.feat(x, emb)
         if his_feats != None:
-            Fd = dens_feat.view(1, 160, 1, self.num_points).repeat(1, 1, num_anc, 1).view(1, 160, num_anc * self.num_points).contiguous()
+            Fd = dens_feat.view(1, self.c_f, 1, self.num_points).repeat(1, 1, num_anc, 1).view(1, self.c_f, num_anc * self.num_points).contiguous()
             feat_x = torch.cat((feat_x, Fd), dim=1)  # (1, 320, 500 x 125)
             feat_x = self.diff2(feat_x)  # (1, 160, 500 x 125)
 
         feat_x = feat_x.transpose(2, 1).contiguous()
-        feat_x = feat_x.view(1, num_anc, self.num_points, 160).contiguous()
+        feat_x = feat_x.view(1, num_anc, self.num_points, self.c_f).contiguous()
 
         loc = x.transpose(2, 1).contiguous().view(1, num_anc, self.num_points, 3)
         weight = self.sm(-1.0 * torch.norm(loc, dim=3)).contiguous()
-        weight = weight.view(1, num_anc, self.num_points, 1).repeat(1, 1, 1, 160).contiguous()
+        weight = weight.view(1, num_anc, self.num_points, 1).repeat(1, 1, 1, self.c_f).contiguous()
 
-        feat_x = torch.sum((feat_x * weight), dim=2).contiguous().view(1, num_anc, 160)
+        feat_x = torch.sum((feat_x * weight), dim=2).contiguous().view(1, num_anc, self.c_f)
         feat_x = feat_x.transpose(2, 1).contiguous()
 
         kp_feat = F.leaky_relu(self.kp_1(feat_x))
-        kp_feat = self.kp_2(kp_feat)
+        if self.opt.deeper != True:
+            kp_feat = self.kp_2(kp_feat)
+        else:
+            kp_feat = self.kp_2(F.leaky_relu(self.kp_4(F.leaky_relu(self.kp_3(kp_feat)))))
         kp_feat = kp_feat.transpose(2, 1).contiguous()
         kp_x = kp_feat.view(1, num_anc, self.num_key, 3).contiguous()
         kp_x = (kp_x + anchor_for_key).contiguous()
@@ -299,7 +348,7 @@ class KeyNet(nn.Module):
 
 
 
-            sum = torch.sum(sum, dim = 1).view(1, 160, 500)
+            sum = torch.sum(sum, dim = 1).view(1, self.c_f, 500)
             dens_feat = self.diff4(torch.cat((sum, dens_feat), dim = 1)) # (1, 160, 500)
 
         emb = emb.repeat(1, 1, num_anc).detach()
@@ -336,23 +385,26 @@ class KeyNet(nn.Module):
             x = x.transpose(2, 1)
             feat_x = self.feat(x, emb)
             if his_feats != None:
-                Fd = dens_feat.view(1, 160, 1, self.num_points).repeat(1, 1, num_anc, 1).view(1, 160,
+                Fd = dens_feat.view(1, self.c_f, 1, self.num_points).repeat(1, 1, num_anc, 1).view(1, self.c_f,
                                                                                               num_anc * self.num_points).contiguous()
                 feat_x = torch.cat((feat_x, Fd), dim=1)  # (1, 320, 500 x 125)
                 feat_x = self.diff2(feat_x)  # (1, 160, 500 x 125)
 
             feat_x = feat_x.transpose(2, 1)
-            feat_x = feat_x.view(1, num_anc, self.num_points, 160).detach()
+            feat_x = feat_x.view(1, num_anc, self.num_points, self.c_f).detach()
 
             loc = x.transpose(2, 1).view(1, num_anc, self.num_points, 3)
             weight = self.sm(-1.0 * torch.norm(loc, dim=3))
-            weight = weight.view(1, num_anc, self.num_points, 1).repeat(1, 1, 1, 160)
+            weight = weight.view(1, num_anc, self.num_points, 1).repeat(1, 1, 1, self.c_f)
 
-            feat_x = torch.sum((feat_x * weight), dim=2).view(1, num_anc, 160)
+            feat_x = torch.sum((feat_x * weight), dim=2).view(1, num_anc, self.c_f)
             feat_x = feat_x.transpose(2, 1).detach()
 
             kp_feat = F.leaky_relu(self.kp_1(feat_x))
-            kp_feat = self.kp_2(kp_feat)
+            if self.opt.deeper != True:
+                kp_feat = self.kp_2(kp_feat)
+            else:
+                kp_feat = self.kp_2(F.leaky_relu(self.kp_4(F.leaky_relu(self.kp_3(kp_feat)))))
             kp_feat = kp_feat.transpose(2, 1)
             kp_x = kp_feat.view(1, num_anc, self.num_key, 3)
             kp_x = (kp_x + anchor_for_key).detach()

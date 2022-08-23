@@ -36,9 +36,10 @@ parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
 parser.add_argument('--occlude', action= 'store_true')
 parser.add_argument('--ccd', action = 'store_true', help = 'Use skeleton merger to compute the CCD loss.')
 parser.add_argument('--tfb', action = 'store_true', help = 'Use TF-Blender or not.')
-parser.add_argument('--video_num', default = 976, type = int)
+parser.add_argument('--video_num', default = 600, type = int)
+parser.add_argument('--deeper', action= 'store_true', help = 'Use a deeper network.')
 parser.add_argument('--memory_size', default=0, type = int)
-
+parser.add_argument('--d_scale', default= 10, type = float)
 opt = parser.parse_args()
 
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
@@ -116,7 +117,7 @@ while(test_dataset.current_video_num <= opt.video_num):
 
             Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False, his_feats=[feats, test_dataset.cloud_his])
 
-        test_dataset.update_sequence(img, choose, cloud)
+            test_dataset.update_sequence(img, choose, cloud)
         min_dis = 1000
         lenggth = len(Kp_to)
         for idx in range(lenggth):

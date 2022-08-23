@@ -170,9 +170,9 @@ class Loss(_Loss):
             pred_r = self.estimate_rotation(rot_Kp_fr, rot_Kp_to, sym_or_not)
             frob_sqr = torch.sum(((pred_r - rot) * (pred_r - rot)).view(-1)).contiguous()
             frob = torch.sqrt(frob_sqr).unsqueeze(0).contiguous()
-            # cc = torch.cat([self.oneone, frob / (2 * math.sqrt(2))]).contiguous()
-            loss_rot = frob /  math.sqrt(2)
-            # loss_rot = 2. * torch.mean(torch.asin(torch.min(cc))).contiguous()
+            cc = torch.cat([self.oneone, frob / (2 * math.sqrt(2))]).contiguous()
+            # loss_rot = frob /  math.sqrt(2)
+            loss_rot = 2. * torch.mean(torch.asin(torch.min(cc))).contiguous()
             # loss_rot = 2. * torch.mean(torch.asin(frob / (2 * math.sqrt(2)))).contiguous()
 
 
