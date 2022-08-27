@@ -35,12 +35,14 @@ class Dataset(data.Dataset):
         self.ms = opt.memory_size
         self.padding = 1
         self.eval = eval
+        self.mask = opt.mask
         if eval == True:
-            self.e_scale = 1.3
+            self.e_scale = 1.
         else:
-            self.e_scale = 1.05
+            self.e_scale = 1.
         self.num_pt = opt.num_pt
         self.opt = opt
+        self.debug = opt.debug
         self.root = opt.dataset_root
         self.mode = mode
         self.video_num = len(os.listdir(os.path.join(opt.dataset_root, mode, c[opt.category])))
@@ -160,7 +162,7 @@ class Dataset(data.Dataset):
         bb3d = (bb3d - w_t) @ w_r # Object space
 
         # Object space
-        cloud, choose = self.get_cloud(depth, miny, maxy, minx, maxx , self.video_path, visible_sequence[self.index], limit, eval = True, current_r=r, current_t=t)
+        cloud, choose = self.get_cloud(depth, miny, maxy, minx, maxx , self.video_path, visible_sequence[self.index], limit, eval = True, current_r=r, current_t=t, cate_in = self.obj_index )
         cloud = cloud / self.dis_scale
         cloud, _ = self.change_to_scale(scale, cloud_fr = cloud, eval = True)
         if full_img == True:
@@ -285,7 +287,10 @@ class Dataset(data.Dataset):
         # bb3d = sample['instances']['bboxes_3d'][in_cate][index]
         bb3d = np.load(os.path.join(video_path, 'bboxes_3d.npy'))[in_cate][index]
         r, t = self.get_pose(in_cate,  index, video_path)
-        bb3d = self.enlarge_bbox((copy.deepcopy(bb3d) - t) @ r) # Object space
+        if self.eval == True:
+            bb3d = self.enlarge_bbox((copy.deepcopy(bb3d) - t) @ r) # Object space
+        else:
+            bb3d =(copy.deepcopy(bb3d) - t) @ r
         ev = False
         if eval == True:
             bb3d = bb3d @ current_r.T + current_t # camera space
@@ -296,6 +301,15 @@ class Dataset(data.Dataset):
             bb3d = bb3d @ r.T + t # world space
             c_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
             c_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
+        # Testing the 3d bounding box
+        # fig, ax = plt.subplots(1)
+        # ax.imshow(cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png')))
+        # cloud = (bb3d - c_t) @ c_r # Cam space
+        # for tg in cloud:
+        #     p1 = int(tg[0] * -280. / tg[2] + 127.5)
+        #     p0 = int(tg[1] * 280 / tg[2] + 127.5)
+        #     plt.scatter(p1, p0)
+        # plt.show()
 
 
         miny, maxy, minx, maxx  = self.enlarged_2d_box(bb3d, c_r, c_t, eval = ev)
@@ -310,8 +324,8 @@ class Dataset(data.Dataset):
         '''
         Depth test
         '''
-        # print(maxv, minv)
-        # print((bb3d - c_t) @ c_r)  # camera space
+        # # print(maxv, minv)
+        # # print((bb3d - c_t) @ c_r)  # camera space
         # fig, ax = plt.subplots(1)
         # a = np.round(np.sqrt((cv.imread(os.path.join(video_path, 'depth_' +str(index)+ '.png'))[:,:, 0][:, :, np.newaxis] / 65535).clip(0, 1.)) * 255).astype(np.uint8)
         # ax.imshow(a)
@@ -334,6 +348,10 @@ class Dataset(data.Dataset):
         if full_img == True:
             return bb3d, [np.transpose(
                 cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png'))[miny: maxy, minx: maxx] / 255.,(2, 0, 1)), cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png')) ], depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
+        if self.debug == True:
+            return bb3d, np.transpose(
+                cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png'))/ 255.,
+                (2, 0, 1)), depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
 
         return bb3d , np.transpose(cv.imread(os.path.join(video_path, 'rgb_' + str(index) + '.png'))[miny: maxy, minx: maxx] / 255., (2, 0, 1)), depth[miny: maxy, minx: maxx], miny, maxy, minx, maxx
 
@@ -345,45 +363,57 @@ class Dataset(data.Dataset):
         r = quaternion.as_rotation_matrix(qa)
         return r, t
 
-    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit, eval = False, current_r = None, current_t = None):
+    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit, eval = False, current_r = None, current_t = None, cate_in = None, random_r = None, random_t = None):
         np.set_printoptions(threshold=np.inf)
-        choose = (depth.flatten() > -1000.).nonzero()[0]
+        if self.mask == True:
+            mask = np.load(os.path.join(video_path, 'mask.npy'))
 
-        camera_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
-
-        camera_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
-        if len(choose) == 0:
-            return 0
-        if len(choose) > self.num_pt:
-            c_mask = np.zeros(len(choose), dtype=int)
-            c_mask[:self.num_pt] = 1
-            np.random.shuffle(c_mask)
-            choose = choose[c_mask.nonzero()]
+            mask = (mask[index] == cate_in + 1)
+            mask = mask[miny:maxy, minx:maxx].flatten()
+            # print(mask)
+            choose = (mask == True).nonzero()[0]
+            # print()
         else:
-            choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
+            choose = (depth.flatten() > -1000.).nonzero()[0]
 
-        depth = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
+        # camera_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
+        #
+        # camera_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
+        #
+        # if len(choose) == 0:
+        #     return 0
+        # if len(choose) > self.num_pt:
+        #     c_mask = np.zeros(len(choose), dtype=int)
+        #     c_mask[:self.num_pt] = 1
+        #     np.random.shuffle(c_mask)
+        #     choose = choose[c_mask.nonzero()]
+        # else:
+        #     choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
+
+        depth_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
 
 
         xmap_masked = self.xmap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
         ymap_masked = self.ymap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
-        pt2 = depth / -1.
+        pt2 = depth_masked / -1.
         # print(self.intrinsics[0][2], self.intrinsics[1][2], self.intrinsics[0][0], self.intrinsics[1][1])
         pt0 = (ymap_masked - self.intrinsics[0][2]) * pt2 / self.intrinsics[0][0]
         pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
         cloud = np.concatenate((-1. * pt0, pt1, pt2), axis=1)
 
-        if eval == True:
-            cloud = (cloud - current_t )@ current_r # object space
-        else:
-            # Use obj space rather than world space
-            cloud = (cloud - current_t) @ current_r # object space
+        cloud = (cloud - current_t )@ current_r # object space
+        if eval == False and self.debug == False:
+            cloud  = cloud @ random_r.T + random_t # Do the random rotation and translation
 
 
         choose_temp = (cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]) * (cloud[:, 1] > limit[2]) * (cloud[:, 1] < limit[3]) * (cloud[:, 2] > limit[4]) * (cloud[:, 2] < limit[5])
-        # np.set_printoptions(threshold = np.inf)
 
-        choose = ((depth.flatten() != 0.0) * choose_temp).nonzero()[0]
+        if self.mask == True:
+
+            choose = (mask * choose_temp).nonzero()[0]
+        else:
+            # print((depth.flatten() != 0.0).shape, choose_temp.shape)
+            choose = ((depth.flatten() != 0.0) * choose_temp).nonzero()[0]
         if len(choose) == 0:
             return 0
         if len(choose) > self.num_pt:
@@ -393,20 +423,60 @@ class Dataset(data.Dataset):
             choose = choose[c_mask.nonzero()]
         else:
             choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
-        depth = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
+        depth_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
         xmap_masked = self.xmap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
         ymap_masked = self.ymap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
-        pt2 = depth / -1.
+        pt2 = depth_masked / -1.
         pt0 = (ymap_masked - self.intrinsics[0][2]) * pt2 / self.intrinsics[0][0]
         pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
         cloud = np.concatenate((-pt0, pt1, pt2), axis=1)
-        if eval == True:
-            cloud = (cloud - current_t )@ current_r # object space
-        else:
-            # Use obj space rather than world space
-            cloud = (cloud - current_t) @ current_r  # object space
+        cloud = (cloud - current_t )@ current_r # object space
+        if eval == False and self.debug == False:
+            cloud  = cloud @ random_r.T + random_t # Do the random rotation and translation
+
 
         return cloud , choose
+
+
+    def points_vis(self, points, img, r, t, miny, maxy, minx, maxx, bb3d):
+        # points: (1, 500, 3) in obj space
+        limit = self.search_fit(bb3d)
+        choose_temp = (points[:, 0] >= limit[0]) * (points[:, 0] <= limit[1]) * (points[:, 1] >= limit[2]) * (
+                    points[:, 1] <= limit[3]) * (points[:, 2] >= limit[4]) * (points[:, 2] <= limit[5])
+        # print('------------------------------------------------')
+        # print(choose_temp)
+        for i in points:
+            if i[0] >= limit[0] and i[0] <= limit[1] and i[1] >= limit[2] and i[1] <= limit[3] and i[2] >= limit[4] and i[2] <= limit[5]:
+                pass
+            else:
+                print('error!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                break
+
+
+        points = points @ r.T + t # camera space
+        bb3d = bb3d @ r.T + t
+
+
+        m_proj = np.array([[-280., 0., 127.5], [0., 280., 127.5], [0., 0., 1.]])
+        bb3d = (m_proj @ bb3d.transpose()).transpose()
+        cam_bb3d = (m_proj @ points.transpose()).transpose()
+        bb3d = ((1 / bb3d[:, 2]) * bb3d.transpose()).transpose()
+        cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
+        cam_bb3d = cam_bb3d.astype(np.int)
+        bb3d = bb3d.astype(np.int)
+        points = cam_bb3d[:, 0:2]
+        bb3d = bb3d[:, 0:2]
+        fig, ax = plt.subplots(1)
+        ax.imshow(img)
+        for p in points:
+            plt.scatter(p[0], p[1], s = 5)
+        for b in bb3d:
+            plt.scatter(b[0], b[1], s = 10, color = 'red')
+        rect = matplotlib.patches.Rectangle([minx, miny], maxx - minx, maxy - miny, linewidth=1, edgecolor='red',
+                                                facecolor='none')
+        ax.add_patch(rect)
+        plt.show()
+
 
 
 
@@ -508,13 +578,13 @@ class Dataset(data.Dataset):
                     '''
                     Obtaining current and next frames index, video_path, in_cate
                     '''
-
+                    # bb3d: world space, frame: cropped rgb(3, h, w), depth: cropped depth(h, w)
                     fr_bb3d,  fr_frame, fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx = self.get_frame(choose_frame[0], video_path, in_cate)
                     to_bb3d,  to_frame, to_depth, to_miny, to_maxy, to_minx, to_maxx = self.get_frame(choose_frame[1], video_path, in_cate)
-
+                    # Object pose
                     fr_r, fr_t = self.get_pose(in_cate, choose_frame[0], video_path)
                     to_r, to_t = self.get_pose(in_cate, choose_frame[1], video_path)
-                    # Use camera space rather than world space
+                    # Camera pose
                     fr_r_c, fr_t_c = np.load(os.path.join(video_path, 'cam_r_' + str(choose_frame[0]) + '.npy')), np.load(os.path.join(video_path, 'cam_t_' + str(choose_frame[0]) + '.npy'))
                     to_r_c, to_t_c = np.load(os.path.join(video_path, 'cam_r_' + str(choose_frame[1]) + '.npy')), np.load(os.path.join(video_path, 'cam_t_' + str(choose_frame[1]) + '.npy'))
 
@@ -524,34 +594,37 @@ class Dataset(data.Dataset):
                     delta = math.pi / 10.
                     noise_trans = 0.05
                     r1 = euler_matrix(random.uniform(-delta, delta), random.uniform(-delta, delta), random.uniform(-delta, delta))[:3, :3] # Use random transformation for training
-                    t1 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)]) * 10.
+                    t1 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)])
 
                     r2 = euler_matrix(random.uniform(-delta, delta), random.uniform(-delta, delta), random.uniform(-delta, delta))[:3, :3] # Use random transformation for training
-                    t2 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)]) * 10.
+                    t2 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)])
 
-
+                    # bb3d transformed from world space to obj space
                     fr_bb3d = (fr_bb3d - fr_t) @ fr_r
-                    to_bb3d = (to_bb3d - to_t) @ to_r # obj space
+                    to_bb3d = (to_bb3d - to_t) @ to_r
 
                     fr_obj_r, fr_obj_t = (fr_r.T @ fr_r_c).T, fr_r_c.T @ (fr_t - fr_t_c) # Transformation from object to camera space
                     to_obj_r, to_obj_t = (to_r.T @ to_r_c).T, to_r_c.T @ (to_t - to_t_c)
 
-                    limit_fr = self.search_fit(fr_bb3d) # The limit under obj space in object space
+                    limit_fr = self.search_fit(fr_bb3d) # The limit of 3d bounding box under obj space
                     limit_to = self.search_fit(to_bb3d)
                     # fr_bb3d = (fr_bb3d - fr_t) @ fr_r # object space
                     #lim_fr = self.search_fit((fr_bb3d - fr_t) @ fr_r)
                     #lim_to = self.search_fit((to_bb3d - to_t) @ to_r)
-                    fr_bb3d /= self.dis_scale
-                    anchor_box, scale = self.get_anchor_box(fr_bb3d)
+                    if self.debug != True:
+                        fr_bb3d /= self.dis_scale # Scale the 3d bounding box in obj space
+                    anchor_box, scale = self.get_anchor_box(fr_bb3d) # The bounding box we use the obtain the anchor box is the one after scaling
                     if np.max(abs(anchor_box)) > 1.0:
 
                         sys.exit()
-                    fr_t /= self.dis_scale
-                    to_t /= self.dis_scale
 
-
-                    fr_cloud, fr_choose = self.get_cloud(fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx, video_path, choose_frame[0], limit_fr, current_r= fr_obj_r, current_t = fr_obj_t) # Return the cloud under obj space
-                    to_cloud, to_choose = self.get_cloud(to_depth, to_miny, to_maxy, to_minx, to_maxx, video_path, choose_frame[1], limit_to, current_r=to_obj_r, current_t = to_obj_t)
+                    if self.mask == True:
+                        c_i = in_cate
+                    else:
+                        c_i = None
+                    # The points will be in obj space
+                    fr_cloud, fr_choose = self.get_cloud(fr_depth, fr_miny, fr_maxy, fr_minx, fr_maxx, video_path, choose_frame[0], limit_fr, current_r= fr_obj_r, current_t = fr_obj_t, cate_in = c_i, random_r = r1, random_t = t1) # Return the cloud under obj space
+                    to_cloud, to_choose = self.get_cloud(to_depth, to_miny, to_maxy, to_minx, to_maxx, video_path, choose_frame[1], limit_to, current_r=to_obj_r, current_t = to_obj_t, cate_in = c_i, random_r = r2, random_t = t2)
 
 
 
@@ -561,19 +634,15 @@ class Dataset(data.Dataset):
                     #
                     # fr_cloud, to_cloud = (fr_cloud - fr_obj_t) @ fr_obj_r, (to_cloud - to_obj_t) @ to_obj_r # obj space point cloud
 
-                    fr_cloud, to_cloud = fr_cloud @ r1.T + t1, to_cloud @ r2.T + t2 # Doing the random transformation
-
-                    fr_r, fr_t = r1, t1
+                    fr_r, fr_t = r1, t1 # Assign the random pose change to the valuable
                     to_r, to_t = r2, t2
 
-                    fr_t /= self.dis_scale
+                    fr_t /= self.dis_scale # Scale the two random translations.
                     to_t /= self.dis_scale
-
-                    fr_cloud /= self.dis_scale
-                    to_cloud /= self.dis_scale
-
-                    # np.set_printoptions(threshold = np.inf)
-                    fr_cloud, to_cloud = self.change_to_scale(scale, fr_cloud, to_cloud)
+                    if self.debug != True:
+                        fr_cloud /= self.dis_scale
+                        to_cloud /= self.dis_scale # Scale the points finally.
+                        fr_cloud, to_cloud = self.change_to_scale(scale, fr_cloud, to_cloud) # Scale the points again according to the scale factor from anchor box.
                     '''
                     Obtaining historical frames (Remember to add limit)
                     '''
@@ -607,10 +676,10 @@ class Dataset(data.Dataset):
 
                         his_cloud_fr, his_choose_fr = self.get_cloud(his_depth_fr, his_miny_fr, his_maxy_fr,
                                                                      his_minx_fr, his_maxx_fr, video_path, his_index_fr,
-                                                                     limit=self.search_fit(bb3_fr), current_r=fr_cr, current_t=fr_ct)
+                                                                     limit=self.search_fit(bb3_fr), current_r=fr_cr, current_t=fr_ct, cate_in = c_i)
                         his_cloud_to, his_choose_to = self.get_cloud(his_depth_to, his_miny_to, his_maxy_to,
                                                                      his_minx_to, his_maxx_to, video_path, his_index_to,
-                                                                     limit=self.search_fit(bb3_to), current_r=to_cr, current_t=to_ct)
+                                                                     limit=self.search_fit(bb3_to), current_r=to_cr, current_t=to_ct, cate_in = c_i)
 
                         his_cloud_fr /= self.dis_scale
                         his_cloud_to /= self.dis_scale
@@ -641,6 +710,18 @@ class Dataset(data.Dataset):
                                        torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float32)), fr_his_fr, choose_his_fr, cloud_his_fr,\
                                         fr_his_to, choose_his_to, cloud_his_to
         else:
+            if self.debug == True:
+                return torch.from_numpy(fr_frame.astype(np.float32)), torch.from_numpy(
+                    fr_r.astype(np.float32)), \
+                       torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)), \
+                       torch.LongTensor(fr_choose.astype(np.int32)), \
+                       self.norm(torch.from_numpy(to_frame.astype(np.float32))), \
+                       torch.from_numpy(to_r.astype(np.float32)), \
+                       torch.from_numpy(to_t.astype(np.float32)), \
+                       torch.from_numpy(to_cloud.astype(np.float32)), \
+                       torch.LongTensor(to_choose.astype(np.int32)), torch.from_numpy(
+                    anchor_box.astype(np.float32)), torch.from_numpy(scale.astype(np.float32)), torch.from_numpy(fr_obj_r.astype(np.float32)), torch.from_numpy(fr_obj_t.astype(np.float32)), fr_miny, fr_maxy, fr_minx, fr_maxx, fr_bb3d
+
             return  self.norm(torch.from_numpy(fr_frame.astype(np.float32))), torch.from_numpy(fr_r.astype(np.float32)),\
                              torch.from_numpy(fr_t.astype(np.float32)), torch.from_numpy(fr_cloud.astype(np.float32)),\
                              torch.LongTensor(fr_choose.astype(np.int32)),\

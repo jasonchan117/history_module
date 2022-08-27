@@ -46,6 +46,8 @@ parser.add_argument('--tfb_thres', default = 0.7, type = float, help = 'The thre
 parser.add_argument('--topk', default = 8 , type = int, help = 'The topk value considered in feature fusion.')
 parser.add_argument('--score', default= np.Inf, type = float)
 parser.add_argument('--d_scale', default= 10, type = float)
+parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
+parser.add_argument('--debug', action = 'store_true', help = 'help debug')
 opt = parser.parse_args()
 cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 
