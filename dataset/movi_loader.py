@@ -365,30 +365,26 @@ class Dataset(data.Dataset):
 
     def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit, eval = False, current_r = None, current_t = None, cate_in = None, random_r = None, random_t = None):
         np.set_printoptions(threshold=np.inf)
-        if self.mask == True:
-            mask = np.load(os.path.join(video_path, 'mask.npy'))
 
+        if self.mask == True and eval == False:
+            mask = np.load(os.path.join(video_path, 'mask.npy'))
             mask = (mask[index] == cate_in + 1)
             mask = mask[miny:maxy, minx:maxx].flatten()
-            # print(mask)
             choose = (mask == True).nonzero()[0]
-            # print()
+
+            if len(choose) == 0:
+                return 0
+            if len(choose) > self.num_pt:
+                c_mask = np.zeros(len(choose), dtype=int)
+                c_mask[:self.num_pt] = 1
+                np.random.shuffle(c_mask)
+                choose = choose[c_mask.nonzero()]
+            else:
+                choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
         else:
             choose = (depth.flatten() > -1000.).nonzero()[0]
 
-        # camera_r = np.load(os.path.join(video_path, 'cam_r_' + str(index) + '.npy'))
-        #
-        # camera_t = np.load(os.path.join(video_path, 'cam_t_' + str(index) + '.npy'))
-        #
-        # if len(choose) == 0:
-        #     return 0
-        # if len(choose) > self.num_pt:
-        #     c_mask = np.zeros(len(choose), dtype=int)
-        #     c_mask[:self.num_pt] = 1
-        #     np.random.shuffle(c_mask)
-        #     choose = choose[c_mask.nonzero()]
-        # else:
-        #     choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
+
 
         depth_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
 
@@ -405,37 +401,38 @@ class Dataset(data.Dataset):
         if eval == False and self.debug == False:
             cloud  = cloud @ random_r.T + random_t # Do the random rotation and translation
 
-
-        choose_temp = (cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]) * (cloud[:, 1] > limit[2]) * (cloud[:, 1] < limit[3]) * (cloud[:, 2] > limit[4]) * (cloud[:, 2] < limit[5])
-
-        if self.mask == True:
-
-            choose = (mask * choose_temp).nonzero()[0]
+        if self.mask == True and eval == False:
+            return cloud, choose
         else:
-            # print((depth.flatten() != 0.0).shape, choose_temp.shape)
+            choose_temp = (cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]) * (cloud[:, 1] > limit[2]) * (cloud[:, 1] < limit[3]) * (cloud[:, 2] > limit[4]) * (cloud[:, 2] < limit[5])
+
+            #     choose = (mask * choose_temp).nonzero()[0]
+            # else:
+            #     # print((depth.flatten() != 0.0).shape, choose_temp.shape)
             choose = ((depth.flatten() != 0.0) * choose_temp).nonzero()[0]
-        if len(choose) == 0:
-            return 0
-        if len(choose) > self.num_pt:
-            c_mask = np.zeros(len(choose), dtype=int)
-            c_mask[:self.num_pt] = 1
-            np.random.shuffle(c_mask)
-            choose = choose[c_mask.nonzero()]
-        else:
-            choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
-        depth_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
-        xmap_masked = self.xmap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
-        ymap_masked = self.ymap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
-        pt2 = depth_masked / -1.
-        pt0 = (ymap_masked - self.intrinsics[0][2]) * pt2 / self.intrinsics[0][0]
-        pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
-        cloud = np.concatenate((-pt0, pt1, pt2), axis=1)
-        cloud = (cloud - current_t )@ current_r # object space
-        if eval == False and self.debug == False:
-            cloud  = cloud @ random_r.T + random_t # Do the random rotation and translation
+
+            if len(choose) == 0:
+                return 0
+            if len(choose) > self.num_pt:
+                c_mask = np.zeros(len(choose), dtype=int)
+                c_mask[:self.num_pt] = 1
+                np.random.shuffle(c_mask)
+                choose = choose[c_mask.nonzero()]
+            else:
+                choose = np.pad(choose, (0, self.num_pt - len(choose)), 'wrap')
+            depth_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
+            xmap_masked = self.xmap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
+            ymap_masked = self.ymap[miny:maxy, minx:maxx].flatten()[choose][:, np.newaxis].astype(np.float32)
+            pt2 = depth_masked / -1.
+            pt0 = (ymap_masked - self.intrinsics[0][2]) * pt2 / self.intrinsics[0][0]
+            pt1 = (xmap_masked - self.intrinsics[1][2]) * pt2 / self.intrinsics[1][1]
+            cloud = np.concatenate((-pt0, pt1, pt2), axis=1)
+            cloud = (cloud - current_t )@ current_r # object space
+            if eval == False and self.debug == False:
+                cloud  = cloud @ random_r.T + random_t # Do the random rotation and translation
 
 
-        return cloud , choose
+            return cloud , choose
 
 
     def points_vis(self, points, img, r, t, miny, maxy, minx, maxx, bb3d):
@@ -594,10 +591,10 @@ class Dataset(data.Dataset):
                     delta = math.pi / 10.
                     noise_trans = 0.05
                     r1 = euler_matrix(random.uniform(-delta, delta), random.uniform(-delta, delta), random.uniform(-delta, delta))[:3, :3] # Use random transformation for training
-                    t1 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)])
+                    t1 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)]) * 10.
 
                     r2 = euler_matrix(random.uniform(-delta, delta), random.uniform(-delta, delta), random.uniform(-delta, delta))[:3, :3] # Use random transformation for training
-                    t2 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)])
+                    t2 = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)]) * 10.
 
                     # bb3d transformed from world space to obj space
                     fr_bb3d = (fr_bb3d - fr_t) @ fr_r
@@ -608,9 +605,7 @@ class Dataset(data.Dataset):
 
                     limit_fr = self.search_fit(fr_bb3d) # The limit of 3d bounding box under obj space
                     limit_to = self.search_fit(to_bb3d)
-                    # fr_bb3d = (fr_bb3d - fr_t) @ fr_r # object space
-                    #lim_fr = self.search_fit((fr_bb3d - fr_t) @ fr_r)
-                    #lim_to = self.search_fit((to_bb3d - to_t) @ to_r)
+
                     if self.debug != True:
                         fr_bb3d /= self.dis_scale # Scale the 3d bounding box in obj space
                     anchor_box, scale = self.get_anchor_box(fr_bb3d) # The bounding box we use the obtain the anchor box is the one after scaling
