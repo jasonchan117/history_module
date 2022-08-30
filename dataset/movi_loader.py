@@ -363,10 +363,10 @@ class Dataset(data.Dataset):
         r = quaternion.as_rotation_matrix(qa)
         return r, t
 
-    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit, eval = False, current_r = None, current_t = None, cate_in = None, random_r = None, random_t = None):
+    def get_cloud(self, depth, miny, maxy, minx, maxx, video_path, index, limit, eval = False, current_r = None, current_t = None, cate_in = None, random_r = None, random_t = None, h = False):
         np.set_printoptions(threshold=np.inf)
 
-        if self.mask == True and eval == False:
+        if self.mask == True:
             mask = np.load(os.path.join(video_path, 'mask.npy'))
             mask = (mask[index] == cate_in + 1)
             mask = mask[miny:maxy, minx:maxx].flatten()
@@ -401,7 +401,7 @@ class Dataset(data.Dataset):
         if eval == False and self.debug == False:
             cloud  = cloud @ random_r.T + random_t # Do the random rotation and translation
 
-        if self.mask == True and eval == False:
+        if self.mask == True:
             return cloud, choose
         else:
             choose_temp = (cloud[:, 0] > limit[0]) * (cloud[:, 0] < limit[1]) * (cloud[:, 1] > limit[2]) * (cloud[:, 1] < limit[3]) * (cloud[:, 2] > limit[4]) * (cloud[:, 2] < limit[5])
@@ -671,10 +671,10 @@ class Dataset(data.Dataset):
 
                         his_cloud_fr, his_choose_fr = self.get_cloud(his_depth_fr, his_miny_fr, his_maxy_fr,
                                                                      his_minx_fr, his_maxx_fr, video_path, his_index_fr,
-                                                                     limit=self.search_fit(bb3_fr), current_r=fr_cr, current_t=fr_ct, cate_in = c_i)
+                                                                     limit=self.search_fit(bb3_fr), current_r=fr_cr, current_t=fr_ct, cate_in = c_i, eval = True)
                         his_cloud_to, his_choose_to = self.get_cloud(his_depth_to, his_miny_to, his_maxy_to,
                                                                      his_minx_to, his_maxx_to, video_path, his_index_to,
-                                                                     limit=self.search_fit(bb3_to), current_r=to_cr, current_t=to_ct, cate_in = c_i)
+                                                                     limit=self.search_fit(bb3_to), current_r=to_cr, current_t=to_ct, cate_in = c_i, eval = True)
 
                         his_cloud_fr /= self.dis_scale
                         his_cloud_to /= self.dis_scale
