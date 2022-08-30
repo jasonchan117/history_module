@@ -42,6 +42,8 @@ parser.add_argument('--v_id', default = 0, type = int, help = 'The video id that
 parser.add_argument('--ite', default= 1000, type = int)
 parser.add_argument('--deeper', action= 'store_true', help = 'Use a deeper network.')
 parser.add_argument('--d_scale', default= 10, type = float)
+parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
+parser.add_argument('--debug', action = 'store_true', help = 'help debug')
 m_proj = np.array([[-280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]])
 opt = parser.parse_args()
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
@@ -53,7 +55,7 @@ test_dataset = Dataset(opt, mode = 'test', length = 5000, eval = True)
 test_dataset.next_video(opt.v_id)
 criterion = Loss(opt.num_kp)
 
-# test_dataset.obj_index = 4
+# test_dataset.obj_index = 2
 '''
  Video
  '''
@@ -69,6 +71,7 @@ while (True):
         img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
     except:
         test_dataset.update_frame()
+
         continue
     break
 
