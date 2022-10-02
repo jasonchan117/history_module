@@ -44,6 +44,7 @@ parser.add_argument('--deeper', action= 'store_true', help = 'Use a deeper netwo
 parser.add_argument('--d_scale', default= 10, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
+parser.add_argument('--obj', default= -1, type  = int)
 m_proj = np.array([[-280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]])
 opt = parser.parse_args()
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
@@ -55,7 +56,8 @@ test_dataset = Dataset(opt, mode = 'test', length = 5000, eval = True)
 test_dataset.next_video(opt.v_id)
 criterion = Loss(opt.num_kp)
 
-# test_dataset.obj_index = 2
+if opt.obj != -1:
+    test_dataset.obj_index = opt.obj
 '''
  Video
  '''
@@ -148,24 +150,50 @@ while (True):
     cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
     cam_bb3d = cam_bb3d.astype(np.int)
     cam_bb3d = cam_bb3d[:, 0:2]
-    print(cam_bb3d)
+
     fig, ax = plt.subplots(1)
     ax.imshow(ori_img)
-    x = cam_bb3d[:,0]
-    y = cam_bb3d[:,1]
+    x1 = [cam_bb3d[0][0], cam_bb3d[1][0], cam_bb3d[5][0], cam_bb3d[4][0]]
+    y1 = [cam_bb3d[0][1], cam_bb3d[1][1], cam_bb3d[5][1], cam_bb3d[4][1]]
+
+    x2 = [cam_bb3d[2][0], cam_bb3d[3][0], cam_bb3d[7][0], cam_bb3d[6][0]]
+    y2 = [cam_bb3d[2][1], cam_bb3d[3][1], cam_bb3d[7][1], cam_bb3d[6][1]]
+
+    x3 = [cam_bb3d[6][0], cam_bb3d[2][0], cam_bb3d[0][0], cam_bb3d[4][0], cam_bb3d[6][0]]
+    y3 = [cam_bb3d[6][1], cam_bb3d[2][1], cam_bb3d[0][1], cam_bb3d[4][1], cam_bb3d[6][1]]
+
+    x4 = [cam_bb3d[7][0], cam_bb3d[3][0], cam_bb3d[1][0], cam_bb3d[5][0], cam_bb3d[7][0]]
+    y4 = [cam_bb3d[7][1], cam_bb3d[3][1], cam_bb3d[1][1], cam_bb3d[5][1], cam_bb3d[7][1]]
 
 
-    ax.plot(x, y, c = 'green')
+    ax.plot(x1, y1, c = 'green')
+    ax.plot(x2, y2, c='green' )
+    ax.plot(x3, y3, c='green')
+    ax.plot(x4, y4, c='green')
 
     cam_bb3d = bb3d @ current_r.T + current_t
     cam_bb3d = (m_proj @ cam_bb3d.transpose()).transpose()
     cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
     cam_bb3d = cam_bb3d.astype(np.int)
     cam_bb3d = cam_bb3d[:, 0:2]
-    print(cam_bb3d)
-    x = cam_bb3d[:,0]
-    y = cam_bb3d[:,1]
-    ax.plot(x, y, c = 'red')
+
+    x1 = [cam_bb3d[0][0], cam_bb3d[1][0], cam_bb3d[5][0], cam_bb3d[4][0]]
+    y1 = [cam_bb3d[0][1], cam_bb3d[1][1], cam_bb3d[5][1], cam_bb3d[4][1]]
+
+    x2 = [cam_bb3d[2][0], cam_bb3d[3][0], cam_bb3d[7][0], cam_bb3d[6][0]]
+    y2 = [cam_bb3d[2][1], cam_bb3d[3][1], cam_bb3d[7][1], cam_bb3d[6][1]]
+
+    x3 = [cam_bb3d[6][0], cam_bb3d[2][0], cam_bb3d[0][0], cam_bb3d[4][0], cam_bb3d[6][0]]
+    y3 = [cam_bb3d[6][1], cam_bb3d[2][1], cam_bb3d[0][1], cam_bb3d[4][1], cam_bb3d[6][1]]
+
+    x4 = [cam_bb3d[7][0], cam_bb3d[3][0], cam_bb3d[1][0], cam_bb3d[5][0], cam_bb3d[7][0]]
+    y4 = [cam_bb3d[7][1], cam_bb3d[3][1], cam_bb3d[1][1], cam_bb3d[5][1], cam_bb3d[7][1]]
+
+
+    ax.plot(x1, y1, c = 'red')
+    ax.plot(x2, y2, c='red' )
+    ax.plot(x3, y3, c='red')
+    ax.plot(x4, y4, c='red')
 
     plt.savefig(os.path.join(opt.output, str(test_dataset.current_video_num) + '_' + str(test_dataset.obj_index) + '_' + str(test_dataset.index)))
     plt.show()
