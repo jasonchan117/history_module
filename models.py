@@ -21,6 +21,90 @@ import copy
 from knn_cuda import KNN
 
 
+
+class PointsTimes(nn.Module):
+    def __init__(self, opt):
+        super(PointsTimes, self).__init__()
+        self.opt = opt
+        self.np = 8
+        self.knn = KNN(self.np)
+
+    def forward(self, feat1, feat2, inds):
+        selected_feat = torch.gather(feat2, 2,
+                                     inds.view(1, 1, -1).repeat(1, 160, 1).contiguous())  # (1, 64, 500 * 8)
+
+        current_feat = feat1.view(1, 160, 500, 1).repeat(1, 1, 1, self.np).contiguous()  # (1, 64, 500, 8)
+        current_feat = current_feat.view(1, 160, -1).contiguous()
+        diff = current_feat * selected_feat
+
+        diff = diff.view(1, 160, 500, 8).contiguous()
+        diff = torch.sum(diff, dim=3) / self.np  # (1 , 64, 500)
+
+        return diff
+class PointsPlus(nn.Module):
+    def __init__(self, opt):
+        super(PointsPlus, self).__init__()
+        self.opt = opt
+        self.np = 8
+        self.knn = KNN(self.np)
+    def forward(self, feat1,  feat2,  inds, dim = 64):
+        # print(feat1.size(), feat2.size())
+        selected_feat = torch.gather(feat2, 2, inds.view(1, 1, -1).repeat(1, dim, 1).contiguous())# (1, 64, 500 * 8)
+
+        current_feat = feat1.view(1, dim, 500, 1).repeat(1, 1, 1, self.np).contiguous() #(1, 64, 500, 8)
+        current_feat = current_feat.view(1, dim, -1).contiguous()
+        diff = current_feat + selected_feat
+
+        diff = diff.view(1, dim, 500, 8).contiguous()
+        diff = torch.sum(diff, dim = 3) / self.np # (1 , 64, 500)
+
+        return diff
+class PointsDiff(nn.Module):
+    def __init__(self, opt):
+        super(PointsDiff, self).__init__()
+        self.opt = opt
+        self.np = 8
+        self.knn = KNN(self.np)
+    def forward(self, feat1, feat2, inds, weight):
+
+        # inds:#(1, numpt, 8) feat: (1, 64, 500) weight: (1, 500 * 8)
+        # The inds here is the closest k points from feat1 to feat2
+
+        selected_feat = torch.gather(feat2, 2, inds.view(1, 1, -1).repeat(1, 64, 1).contiguous())# (1, 64, 500 * 8)
+        current_feat = feat1.view(1, 64, 500, 1).repeat(1, 1, 1, self.np).contiguous() #(1, 64, 500, 8)
+        current_feat = current_feat.view(1, 64, -1).contiguous()
+        diff = current_feat - selected_feat
+        weight = weight.unsqueeze(1).repeat(1, 64, 1).contiguous()
+        diff*= weight
+        diff = diff.view(1, 64, 500, 8).contiguous()
+        diff = torch.sum(diff, dim = 3) / self.np # (1 , 64, 500)
+
+        return diff
+class PointsOp(nn.Module):
+    def __init__(self, opt):
+        super(PointsOp, self).__init__()
+        self.opt = opt
+        if opt.deeper == True:
+            self.c_f = 200
+
+        else:
+            self.c_f = 160
+        self.np = 8
+        self.knn = KNN(self.np)
+        self.pf = PointsDiff(opt)
+        self.pp = PointsPlus(opt)
+        self.pti = PointsTimes(opt)
+        self.diff3 = torch.nn.Conv1d(self.c_f, self.c_f, 1)
+        self.diff1 = torch.nn.Conv1d(64, self.c_f, 1)
+    def forward(self, feat, feat1, feat2, inds, inds1, inds2, wei1, wei2, dens_feat_f, dens_feat_s):
+        # dens_feat_s = feat
+        pix_diff = self.pf(feat, feat1, inds1, wei1)
+        pt_diff = self.pf(feat, feat2, inds1, wei1)
+        diff_sum = F.sigmoid(self.diff1(self.pp(pix_diff, pt_diff, inds)))
+        new_f = self.pti(dens_feat_f, diff_sum, inds2)
+        # new_f = self.pti(diff_sum, dens_feat_f, inds1)
+        dens_feat_f = self.diff3(self.pp(dens_feat_s, new_f, inds1, dim = self.c_f))
+        return dens_feat_f
 class Pseudo3DConv(nn.Module):
     def __init__(self, opt):
         super(Pseudo3DConv, self).__init__()
@@ -38,7 +122,7 @@ class Pseudo3DConv(nn.Module):
         self.final_conv1 = torch.nn.Conv1d(256, 64, 1)
         self.final_conv2 = torch.nn.Conv1d(160, 64, 1)
         self.final_conv = torch.nn.Conv1d(128, 64, 1)
-    def forward(self, img_feat, cloud, cloud_tar, same = False):
+    def forward(self, img_feat, cloud, cloud_tar, same = False, re_ind = False):
 
         # img_feat:(ms, 32, numpt), cloud:(ms, numpt, 3)
         bs, di, _ = img_feat.size() # (1, 32, numpt)
@@ -52,6 +136,7 @@ class Pseudo3DConv(nn.Module):
             _ , inds_tocloud = self.knn(cloud, cloud_tar)
 
         inds = inds.transpose(2, 1).contiguous() #(1, numpt, 8)
+        index = inds
         inds_tocloud = inds_tocloud.transpose(2, 1).contiguous() #(1, numpt, 8)
         img_feat = img_feat.transpose(2, 1) #(1, numpt, 32)
         cloud = cloud.transpose(2, 1).contiguous() #(1, numpt, 3)
@@ -69,13 +154,17 @@ class Pseudo3DConv(nn.Module):
         current_point = current_point.transpose(3, 2).contiguous()
         current_point = current_point.view(1, 3, -1).contiguous() # (1, 3, 500 * 8)
 
-        weight =  self.sm(-1. * torch.norm(current_point - selected_points, dim = 1).view(1, -1).contiguous()) # 1, 500 * 8
+        weight =  self.sm(-1. * torch.norm(current_point - selected_points, dim = 1).view(1, 500, self.np).transpose(2, 1).contiguous()) # 1, 8, 500
 
+        weight = weight.transpose(2, 1).contiguous()
+        weight = weight.view(1, -1).contiguous()
+        re_wei = weight
         current_point_tocloud = cloud_tar.view(1, 3, 1, -1).repeat(1, 1, 8, 1).contiguous() # (1, 3, 8, 500)
         current_point_tocloud = current_point_tocloud.transpose(3, 2).contiguous()
         current_point_tocloud = current_point_tocloud.view(1, 3, -1).contiguous() # (1, 3, 500 * 8)
-        weight_tocloud = self.sm(-1. * torch.norm(current_point_tocloud - selected_points_tocloud, dim=1).view(1, -1).contiguous())
-
+        weight_tocloud = self.sm(-1. * torch.norm(current_point_tocloud - selected_points_tocloud, dim=1).view(1, 500, self.np).transpose(2, 1).contiguous())
+        weight_tocloud = weight_tocloud.transpose(2, 1).contiguous()
+        weight_tocloud = weight_tocloud.view(1, -1).contiguous()
         selected_feat = self.conv1(selected_feat)  # (1, 64, 500*8)
         selected_feat = self.conv2(F.leaky_relu(selected_feat))  # (1, 128, 500*8)
 
@@ -101,7 +190,8 @@ class Pseudo3DConv(nn.Module):
         final2 = self.final_conv2(final2) # (1, 64, numpt)
         final = torch.cat((final2, final1), dim = 1) # (1, 128, 160)
         final = self.final_conv(F.leaky_relu(final)) #(1, 64, numpt)
-
+        if re_ind == True:
+            return final, index, re_wei
         return final
 
 '''

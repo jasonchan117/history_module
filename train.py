@@ -1,4 +1,5 @@
 import argparse
+import copy
 import os
 import random
 import sys
@@ -24,7 +25,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import warnings
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack]')
+parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack, captra]')
 parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
 parser.add_argument('--dataset_root', type=str, default = '/media/lang/My Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
@@ -48,11 +49,17 @@ parser.add_argument('--score', default= np.Inf, type = float)
 parser.add_argument('--d_scale', default= 10, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
+parser.add_argument('--overlap_seq', action = 'store_true', help = 'Use overlap seq or not')
 opt = parser.parse_args()
 cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
-
+# python train.py --memory_size 5 --outf ckpt/Shoe/diff_randomRT_bugfixed_mask/ --lr 0.000001 --resume ckpt/Shoe/diff_randomRT_bugfixed_mask/model_27_0.24112658077478408_Shoe.pth --mask --score 0.24112658077478408 --begin 28 --epoch 300
 models = {'6pack':KeyNet(opt, opt.num_pt, opt.num_kp)}
+
 model = models[opt.model]
+
+
+
+
 model.float()
 model = model.cuda()
 

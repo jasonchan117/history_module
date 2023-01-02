@@ -65,8 +65,11 @@ while(test_dataset.current_video_num <= opt.video_num):
     '''
     if test_dataset.check_frame_len() == False:
         test_dataset.next_video()
-    if test_dataset.index == 0:
-        test_dataset.init_his()
+
+    # if test_dataset.index == 0:
+    test_dataset.init_his()
+    if len(test_dataset.fr_his) != opt.memory_size :
+        continue
     current_r, current_t = test_dataset.get_current_pose()
     while (True):
         try:
@@ -77,6 +80,9 @@ while(test_dataset.current_video_num <= opt.video_num):
             continue
         break
 
+    test_dataset.basis_rt = [current_r, current_t]
+    test_dataset.basis_scale = scale.squeeze(0).numpy()
+    test_dataset.re_origin( scale=scale.squeeze(0).numpy()) # Using basis rt and basis scale to process the history: back transform all the frames in history seq using curent pose and scale
     img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
     if len(test_dataset.fr_his) == 0:
         Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
@@ -91,7 +97,9 @@ while(test_dataset.current_video_num <= opt.video_num):
                 feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
         Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
                                            his_feats=[feats, test_dataset.cloud_his])
-        test_dataset.update_sequence(img, choose, cloud)
+        cloud_temp = torch.from_numpy(  (test_dataset.times_scale(test_dataset.basis_scale ,( cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T + test_dataset.basis_rt[1] ).astype(np.float32)).unsqueeze(0).cuda()
+        test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), gt_r, gt_t)
+
     min_dis = 0.0005
     while(True):
         print('Video index:', test_dataset.current_video_num, 'Frame index:', test_dataset.index)
@@ -106,6 +114,9 @@ while(test_dataset.current_video_num <= opt.video_num):
             img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
         except:
             continue
+        test_dataset.basis_rt = [current_r, current_t]
+        test_dataset.basis_scale = scale.cpu().squeeze(0).numpy()
+        test_dataset.re_origin(scale=scale.cpu().squeeze(0).numpy())
         if len(test_dataset.fr_his) == 0:
             Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first = False)
         else:
@@ -119,7 +130,6 @@ while(test_dataset.current_video_num <= opt.video_num):
 
             Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False, his_feats=[feats, test_dataset.cloud_his])
 
-            test_dataset.update_sequence(img, choose, cloud)
         min_dis = 1000
         lenggth = len(Kp_to)
         for idx in range(lenggth):
@@ -135,7 +145,11 @@ while(test_dataset.current_video_num <= opt.video_num):
 
         current_t = current_t + np.dot(best_t, current_r.T)
         current_r = np.dot(current_r, best_r)
+        cloud_temp = torch.from_numpy((test_dataset.times_scale(test_dataset.basis_scale, (
+                    cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T +
+                                       test_dataset.basis_rt[1]).astype(np.float32)).unsqueeze(0).cuda()
 
+        test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), current_r, current_t)
         c_transform = np.concatenate((current_r, current_t[:, np.newaxis]), axis = 1)
         c_transform = np.concatenate((c_transform, [[0.0, 0.0, 0.0, 1.0]]), axis = 0)
         g_transform = np.concatenate((gt_r, gt_t[:, np.newaxis]), axis = 1)
