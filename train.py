@@ -17,8 +17,8 @@ import torchvision.utils as vutils
 import matplotlib.pyplot as plt
 import cv2
 from torch.autograd import Variable
-from dataset.movi_loader import Dataset
-
+from dataset.movi_loader import Dataset as Movi
+from dataset.nocs_loader import Nocs
 from libs.network import KeyNet
 from libs.loss import Loss
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -26,12 +26,12 @@ import warnings
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack, captra]')
-parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
+parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, nocs]')
 parser.add_argument('--dataset_root', type=str, default = '/media/lang/My Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
 parser.add_argument('--category', type=int, default = 14,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
-parser.add_argument('--workers', type=int, default = 20, help='number of data loading workers')
+parser.add_argument('--workers', type=int, default = 5, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
 parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
 parser.add_argument('--lr', default=0.00001, help='learning rate', type = float)
@@ -46,13 +46,15 @@ parser.add_argument('--memory_size', default=0, type = int)
 parser.add_argument('--tfb_thres', default = 0.7, type = float, help = 'The threshold to determine whether the relation to be set to 0 or not.')
 parser.add_argument('--topk', default = 8 , type = int, help = 'The topk value considered in feature fusion.')
 parser.add_argument('--score', default= np.Inf, type = float)
-parser.add_argument('--d_scale', default= 10, type = float)
+parser.add_argument('--d_scale', default= 1000, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
+parser.add_argument('--real_data', action = 'store_true', help = 'Only use real data to train.')
 parser.add_argument('--overlap_seq', action = 'store_true', help = 'Use overlap seq or not')
 opt = parser.parse_args()
 cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 # python train.py --memory_size 5 --outf ckpt/Shoe/diff_randomRT_bugfixed_mask/ --lr 0.000001 --resume ckpt/Shoe/diff_randomRT_bugfixed_mask/model_27_0.24112658077478408_Shoe.pth --mask --score 0.24112658077478408 --begin 28 --epoch 300
+
 models = {'6pack':KeyNet(opt, opt.num_pt, opt.num_kp)}
 
 model = models[opt.model]
@@ -67,11 +69,11 @@ if opt.resume != '':
 
     model.load_state_dict(torch.load(opt.resume))
 optimizer = optim.Adam(model.parameters(), lr = opt.lr)
-criterion = Loss(opt.num_kp)
+criterion = Loss(opt.num_kp, opt)
 best_test = opt.score
-traindataset = Dataset(opt, length=5000, mode='train')
+traindataset = Movi(opt, length=5000, mode='train') if opt.dataset == 'movi' else Nocs(opt, length=4000, mode='train', add_noise=True)
 traindataloader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True, num_workers=opt.workers)
-testdataset = Dataset(opt, length=1000, mode='test')
+testdataset = Movi(opt, length=1000, mode='test') if opt.dataset == 'movi' else Nocs(opt, length=1000, mode='val', add_noise = False)
 testdataloader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=False, num_workers=opt.workers)
 for epoch in range(opt.begin, opt.epoch):
 
@@ -119,8 +121,8 @@ for epoch in range(opt.begin, opt.epoch):
             loss, _ = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale, opt.category)
             loss.backward()
         except:
-           print(w, w_1)
-           sys.exit()
+            print(w, w_1)
+            sys.exit()
 
         train_dis_avg += loss.item()
         train_count += 1
@@ -172,11 +174,11 @@ for epoch in range(opt.begin, opt.epoch):
                         to_feats = torch.cat((to_feats, img_feat_to.unsqueeze(1)), dim=1)
 
                 kp_fr, anc_fr, att_fr, w = model(fr_frame, fr_choose, fr_cloud, anchor, scale, fr_t,
-                                                 his_feats=[fr_feats, cloud_his_fr])
+                                                his_feats=[fr_feats, cloud_his_fr])
                 kp_to, anc_to, att_to, w_1 = model(to_frame, to_choose, to_cloud, anchor, scale, to_t,
-                                                   his_feats=[to_feats, cloud_his_to])
+                                                his_feats=[to_feats, cloud_his_to])
             _, item_score = criterion(kp_fr, kp_to, anc_fr, anc_to, att_fr, att_to, fr_r, fr_t, to_r, to_t, scale,
-                                      opt.category)
+                                    opt.category)
             print(item_score)
             score.append(item_score)
         test_dis = np.mean(np.array(score))

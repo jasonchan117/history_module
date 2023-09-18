@@ -20,16 +20,17 @@ from torch.autograd import Variable
 from dataset.movi_loader import Dataset as Movi
 from dataset.nocs_loader import Nocs
 from libs.network import KeyNet
+from libs.old_network import KeyNet as kn
 from libs.loss import Loss
 from benchmark import benchmark
 import copy
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack]')
-parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
+parser.add_argument('--dataset', type = str, default = 'nocs', help = 'dataset from [movi, nocs]')
 parser.add_argument('--dataset_root', type=str, default = '/media/lang/My Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
-parser.add_argument('--category', type=int, default = 14,  help='category to train')
+parser.add_argument('--category', type=int, default = 5,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
 parser.add_argument('--workers', type=int, default = 30, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
@@ -37,54 +38,115 @@ parser.add_argument('--outf', type=str, default = 'ckpt/', help='save dir')
 parser.add_argument('--occlude', action= 'store_true')
 parser.add_argument('--ccd', action = 'store_true', help = 'Use skeleton merger to compute the CCD loss.')
 parser.add_argument('--tfb', action = 'store_true', help = 'Use TF-Blender or not.')
-parser.add_argument('--video_num', default = 600, type = int)
+parser.add_argument('--frame_num', default = 1600, type = int)
+parser.add_argument('--ite', default = 0, type = int)
 parser.add_argument('--deeper', action= 'store_true', help = 'Use a deeper network.')
 parser.add_argument('--memory_size', default=0, type = int)
-parser.add_argument('--d_scale', default= 10, type = float)
+parser.add_argument('--d_scale', default= 1000, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
-opt = parser.parse_args()
+parser.add_argument('--real_data', action = 'store_true', help = 'Only use real data to train.')
 
+opt = parser.parse_args()
+# model = kn(num_points=500, num_key=8, num_cates=6, opt = opt)
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
 model = model.float()
 model.cuda()
 model.eval()
 criterion = Loss(opt.num_kp, opt)
 model.load_state_dict(torch.load(opt.resume))
-test_dataset = Movi(opt, mode = 'test', length = 5000, eval = True) if opt.dataset == 'movi' else Nocs(opt, mode = 'test', length = 5000, eval = True)
+test_dataset = Movi(opt, mode = 'test', length = 5000, eval = True) if opt.dataset == 'movi' else Nocs(opt, mode = 'val', length = 5000, eval = True, add_noise = False)
 
 cls_in_10_10 = 0.
-cls_in_5_5 = 0
-cls_iou_25 = 0
+cls_in_5_5 = 0.
+cls_iou_25 = 0.
 
 cls_rot = []
 cls_trans = []
 cout = 0
-while(test_dataset.current_video_num <= opt.video_num):
+
+while(test_dataset.check_len()):
+
     '''
     Video
     '''
-    if test_dataset.check_frame_len() == False:
-        test_dataset.next_video()
-
+    print('New Start')
     # if test_dataset.index == 0:
-    test_dataset.init_his()
-    if len(test_dataset.fr_his) != opt.memory_size :
-        continue
-    current_r, current_t = test_dataset.get_current_pose()
+    if opt.memory_size != 0:
+        test_dataset.init_his()
+
+    choose_obj = test_dataset.real_obj_name_list[test_dataset.cate_id][test_dataset.obj_index]
+    choose_frame = test_dataset.real_obj_list[test_dataset.cate_id][choose_obj][test_dataset.index]
+
+    current_r, current_t, _ = test_dataset.get_pose(choose_frame, choose_obj)
+    ################
+    if opt.ite != 0:
+        min_dis = 1000.
+        for iterative in range(opt.ite):
+
+
+            while (True):
+                try:
+
+                    img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t, his = False)
+                except:
+
+                    test_dataset.update_frame()
+                    continue
+                break
+            if opt.memory_size != 0:
+                test_dataset.basis_rt = [current_r, current_t]
+                test_dataset.basis_scale = scale.squeeze(0).numpy()
+                test_dataset.re_origin( scale=scale.squeeze(0).numpy()) # Using basis rt and basis scale to process the history: back transform all the frames in history seq using curent pose and scale
+                # cv2.imshow('img', np.transpose(img.numpy(), (1, 2, 0)))
+            img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
+
+
+            if len(test_dataset.fr_his) == 0:
+                Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
+            else:
+                for ind, his in enumerate(test_dataset.fr_his):
+                    img_feat = model.eval_forward(test_dataset.fr_his[ind], test_dataset.choose_his[ind],
+                                                  test_dataset.cloud_his[ind], None, None, 0.0, re_img=True, first=False)
+
+                    if ind == 0:
+                        feats = img_feat.unsqueeze(1)
+                    else:
+                        feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
+                Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
+                                                   his_feats=[feats, test_dataset.cloud_his])
+
+
+
+            new_t, att, kp_dis = criterion.ev_zero(Kp_fr[0], att_fr[0])
+            if min_dis > kp_dis:
+                print(iterative, kp_dis)
+                min_dis = kp_dis
+                best_current_r = copy.deepcopy(current_r)
+                best_current_t = copy.deepcopy(current_t)
+                best_att = copy.deepcopy(att)
+
+            current_t = current_t + np.dot(new_t, current_r.T)
+        current_r, current_t, att = best_current_r, best_current_t, best_att
+
+#######################################
     while (True):
         try:
 
-            img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
+            img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t, his=False)
         except:
+
             test_dataset.update_frame()
             continue
         break
-
-    test_dataset.basis_rt = [current_r, current_t]
-    test_dataset.basis_scale = scale.squeeze(0).numpy()
-    test_dataset.re_origin( scale=scale.squeeze(0).numpy()) # Using basis rt and basis scale to process the history: back transform all the frames in history seq using curent pose and scale
+    if opt.memory_size != 0:
+        test_dataset.basis_rt = [current_r, current_t]
+        test_dataset.basis_scale = scale.squeeze(0).numpy()
+        test_dataset.re_origin(scale=scale.squeeze(
+            0).numpy())  # Using basis rt and basis scale to process the history: back transform all the frames in history seq using curent pose and scale
+        # cv2.imshow('img', np.transpose(img.numpy(), (1, 2, 0)))
     img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
+
     if len(test_dataset.fr_his) == 0:
         Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
     else:
@@ -98,26 +160,32 @@ while(test_dataset.current_video_num <= opt.video_num):
                 feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
         Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
                                            his_feats=[feats, test_dataset.cloud_his])
+
+#################################
+
+    if opt.memory_size != 0:
         cloud_temp = torch.from_numpy(  (test_dataset.times_scale(test_dataset.basis_scale ,( cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T + test_dataset.basis_rt[1] ).astype(np.float32)).unsqueeze(0).cuda()
         test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), gt_r, gt_t)
 
     min_dis = 0.0005
     while(True):
-        print('Video index:', test_dataset.current_video_num, 'Frame index:', test_dataset.index)
+        print('Object', test_dataset.real_obj_name_list[test_dataset.cate_id][test_dataset.obj_index], 'Scene:', test_dataset.scene, 'Frame: ', test_dataset.real_obj_list[test_dataset.cate_id][test_dataset.real_obj_name_list[test_dataset.cate_id][test_dataset.obj_index]][test_dataset.index])
         '''
         Per frame in the video.
         '''
-
+        ####################
         try:
             if test_dataset.update_frame():
                 break
-            img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
+            img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t, his = False)
             img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
         except:
+
             continue
-        test_dataset.basis_rt = [current_r, current_t]
-        test_dataset.basis_scale = scale.cpu().squeeze(0).numpy()
-        test_dataset.re_origin(scale=scale.cpu().squeeze(0).numpy())
+        if opt.memory_size != 0:
+            test_dataset.basis_rt = [current_r, current_t]
+            test_dataset.basis_scale = scale.cpu().squeeze(0).numpy()
+            test_dataset.re_origin(scale=scale.cpu().squeeze(0).numpy())
         if len(test_dataset.fr_his) == 0:
             Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first = False)
         else:
@@ -134,6 +202,7 @@ while(test_dataset.current_video_num <= opt.video_num):
         min_dis = 1000
         lenggth = len(Kp_to)
         for idx in range(lenggth):
+
             Kp_real, new_r, new_t, kp_dis, att = criterion.ev(Kp_fr[0], Kp_to[idx], att_to[idx])
 
             if min_dis > kp_dis:
@@ -146,18 +215,19 @@ while(test_dataset.current_video_num <= opt.video_num):
 
         current_t = current_t + np.dot(best_t, current_r.T)
         current_r = np.dot(current_r, best_r)
-        cloud_temp = torch.from_numpy((test_dataset.times_scale(test_dataset.basis_scale, (
-                    cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T +
-                                       test_dataset.basis_rt[1]).astype(np.float32)).unsqueeze(0).cuda()
+        if opt.memory_size != 0:
+            cloud_temp = torch.from_numpy((test_dataset.times_scale(test_dataset.basis_scale, (
+                        cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T +
+                                           test_dataset.basis_rt[1]).astype(np.float32)).unsqueeze(0).cuda() # camera space and before scale
 
-        test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), current_r, current_t)
+            test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), current_r, current_t)
         c_transform = np.concatenate((current_r, current_t[:, np.newaxis]), axis = 1)
         c_transform = np.concatenate((c_transform, [[0.0, 0.0, 0.0, 1.0]]), axis = 0)
         g_transform = np.concatenate((gt_r, gt_t[:, np.newaxis]), axis = 1)
         g_transform = np.concatenate((g_transform, [[0.0, 0.0, 0.0, 1.0]]), axis = 0)
         bb3d = bb3d.transpose(1, 0)
+
         cm, cm_10, IoU, r_er, t_er = benchmark(c_transform, g_transform, bb3d, opt.category, opt)
-        # cm, IoU, r_er, t_er = benchmark(c_transform, g_transform, bb3d)
         cout += 1
         if r_er != None:
             cls_rot.append(r_er)
@@ -166,10 +236,14 @@ while(test_dataset.current_video_num <= opt.video_num):
         cls_in_10_10 += cm_10
         cls_in_5_5 += cm
         cls_iou_25 += IoU
-
+        if cout >= opt.frame_num:
+            break
         print("NEXT FRAME!!!")
-score1010 = cls_in_10_10 / cout
+        print('>>', cout)
+    if cout >= opt.frame_num:
+        break
 score55 = cls_in_5_5 / cout
+score1010 = cls_in_10_10  / cout
 score25 = cls_iou_25 / cout
 rot_error = np.mean(cls_rot)
 trans_error = np.mean(cls_trans)
@@ -178,6 +252,7 @@ print('5cm 5degree:', score55 *100)
 print('10cm 10degree:', score1010 * 100)
 print('mIoU:', score25 * 100)
 print('rot error:', rot_error)
-print('translation error:', trans_error)
+print('translation error:', trans_error/10)
+
 
 

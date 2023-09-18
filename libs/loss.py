@@ -14,13 +14,14 @@ from knn_cuda import KNN
 import torch.distributions as tdist
 import copy
 
-global_scale = 10.
+# global_scale = 1000.
 
 class Loss(_Loss):
-    def __init__(self, num_key):
+    def __init__(self, num_key, opt):
         super(Loss, self).__init__(True)
         self.num_key = num_key
-
+        self.opt = opt
+        self.global_scale = opt.d_scale
 
         self.oneone = Variable(torch.ones(1)).cuda()
 
@@ -122,8 +123,13 @@ class Loss(_Loss):
 
     def forward(self, Kp_fr, Kp_to, anc_fr, anc_to, att_fr, att_to, r_fr, t_fr, r_to, t_to, scale, cate):
 
+        if ((self.opt.dataset == 'nocs') and (cate - 1 in [2, 4, 5])) or (self.opt.dataset == 'movi' and cate in [3]):
+            sym_or_not = False
+        else:
+            sym_or_not = True
+        print(sym_or_not)
 
-        sym_or_not = False
+        # sym_or_not = False
         num_kp = self.num_key
         num_anc = len(anc_fr[0])
 
@@ -212,10 +218,9 @@ class Loss(_Loss):
         new_r, new_t = self.estimate_pose(Kp_fr, Kp_to)
 
         Kp_to = torch.bmm((ori_Kp_to - new_t), new_r)
-
         Kp_dis = torch.mean(torch.norm((Kp_fr - Kp_to), dim=2), dim=1)
 
-        new_t *= global_scale
+        new_t *= self.global_scale
         return ori_Kp_fr, new_r.detach().cpu().numpy()[0], new_t.detach().cpu().numpy()[0], Kp_dis.item(), att_to
 
     def ev_zero(self, Kp_fr, att_fr):
@@ -224,7 +229,7 @@ class Loss(_Loss):
 
         kp_dis = torch.norm(new_t.view(-1))
 
-        new_t *= global_scale
+        new_t *= self.global_scale
         return new_t.detach().cpu().numpy()[0], att_fr, kp_dis.item()
 
     def inf(self, Kp_fr, Kp_to):
@@ -236,7 +241,7 @@ class Loss(_Loss):
 
         Kp_dis = torch.mean(torch.norm((Kp_fr - Kp_to), dim=2), dim=1)
 
-        new_t *= global_scale
+        new_t *= self.global_scale
         return new_r.detach().cpu().numpy()[0], new_t.detach().cpu().numpy()[0], Kp_dis.item()
 
     def inf_zero(self, Kp_fr):
@@ -245,5 +250,5 @@ class Loss(_Loss):
 
         Kp_dis = torch.norm(new_t.view(-1))
 
-        new_t *= global_scale
+        new_t *= self.global_scale
         return new_t.detach().cpu().numpy()[0], Kp_dis.item()

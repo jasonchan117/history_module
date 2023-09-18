@@ -37,7 +37,7 @@ parser.add_argument('--occlude', action= 'store_true')
 parser.add_argument('--ccd', action = 'store_true', help = 'Use skeleton merger to compute the CCD loss.')
 parser.add_argument('--tfb', action = 'store_true', help = 'Use TF-Blender or not.')
 parser.add_argument('--memory_size', default=0, type = int)
-parser.add_argument('--output', default = 'vis_result/diff_randomRT_0_3')
+parser.add_argument('--output', default = 'vis_result/temp')
 parser.add_argument('--v_id', default = 0, type = int, help = 'The video id that want to evaluate on.')
 parser.add_argument('--ite', default= 1000, type = int)
 parser.add_argument('--deeper', action= 'store_true', help = 'Use a deeper network.')
@@ -76,7 +76,9 @@ while (True):
 
         continue
     break
-
+test_dataset.basis_rt = [current_r, current_t]
+test_dataset.basis_scale = scale.squeeze(0).numpy()
+test_dataset.re_origin( scale=scale.squeeze(0).numpy())
 img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
 if len(test_dataset.fr_his) == 0:
     Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, True)
@@ -93,7 +95,11 @@ else:
             feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
     Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
                                        his_feats=[feats, test_dataset.cloud_his])
-    test_dataset.update_sequence(img, choose, cloud)
+    cloud_temp = torch.from_numpy((test_dataset.times_scale(test_dataset.basis_scale,
+                                                            (cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @
+                                   test_dataset.basis_rt[0].T + test_dataset.basis_rt[1]).astype(np.float32)).unsqueeze(0).cuda()
+    test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), gt_r, gt_t)
+    # test_dataset.update_sequence(img, choose, cloud)
 
 
 
@@ -111,8 +117,10 @@ while (True):
         img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
     except:
         continue
-    print(test_dataset.obj_index)
 
+    test_dataset.basis_rt = [current_r, current_t]
+    test_dataset.basis_scale = scale.cpu().squeeze(0).numpy()
+    test_dataset.re_origin(scale=scale.cpu().squeeze(0).numpy())
     if len(test_dataset.fr_his) == 0:
         Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False)
     else:
@@ -128,7 +136,7 @@ while (True):
         Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False,
                                            his_feats=[feats, test_dataset.cloud_his])
 
-        test_dataset.update_sequence(img, choose, cloud)
+        # test_dataset.update_sequence(img, choose, cloud)
     min_dis = 1000
     lenggth = len(Kp_to)
     for idx in range(lenggth):
@@ -144,6 +152,12 @@ while (True):
 
     current_t = current_t + np.dot(best_t, current_r.T)
     current_r = np.dot(current_r, best_r.T)
+
+    cloud_temp = torch.from_numpy((test_dataset.times_scale(test_dataset.basis_scale, (
+            cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T +
+                                   test_dataset.basis_rt[1]).astype(np.float32)).unsqueeze(0).cuda()
+
+    test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), current_r, current_t)
 
     cam_bb3d = bb3d @ gt_r.T + gt_t
     cam_bb3d = (m_proj @ cam_bb3d.transpose()).transpose()

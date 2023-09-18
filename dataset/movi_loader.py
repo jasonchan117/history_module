@@ -93,11 +93,11 @@ class Dataset(data.Dataset):
         self.obj_index = random.sample(list(np.argwhere(category == self.cate)), 1)[0][0]
     def re_origin(self, scale = [1., 1.,1], only_scale = False):
         if only_scale == True:
-            for i in range(self.opt.memory_size):
+            for i in range(len(self.cloud_his)):
                 self.cloud_his[i] = torch.from_numpy(self.divide_scale(scale , self.cloud_his[i].cpu().squeeze(0).numpy()).astype(np.float32)).unsqueeze(0).cuda()
         else:
             # print(len(self.cloud_his))
-            for i in range(self.opt.memory_size):
+            for i in range(len(self.cloud_his)):
                 self.cloud_his[i] = torch.from_numpy( self.divide_scale(scale ,((self.cloud_his[i].cpu().squeeze(0).numpy() - self.basis_rt[1]) @ self.basis_rt[0]) / self.dis_scale).astype(np.float32)   ).unsqueeze(0).cuda()
     def back_cam(self):
         for i in range(self.opt.memory_size):

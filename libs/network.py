@@ -145,12 +145,51 @@ class KeyNet(nn.Module):
         self.threezero = Variable(torch.from_numpy(np.array([0, 0, 0]).astype(np.float32))).cuda().view(1, 1, 3).repeat(
             1, self.num_points, 1)
         if self.opt.memory_size != 0 :
-            self.p3d = Pseudo3DConv(opt)
-            self.po = PointsOp(opt)
-            # self.diff1 = torch.nn.Conv1d( 64, self.c_f, 1)
+            self.p3d_local = Pseudo3DConv(opt)
+            self.p3d_global= Pseudo3DConv(opt)
+
             self.diff2 = torch.nn.Conv1d( 2 * self.c_f, self.c_f, 1)
-            # self.diff3 = torch.nn.Conv1d(self.c_f, self.c_f, 1)
+
             self.diff4 = torch.nn.Conv1d(2 * self.c_f, self.c_f, 1)
+    def process_his(self, his_feats, c_img, c_cloud):
+        his_imgs = his_feats[0].transpose(1, 0).contiguous() # (ms, bs, 32, 500)
+        his_clouds = his_feats[1]
+        '''
+        Global Difference
+        '''
+        # featc, indexc, weic = self.p3d(c_img, c_cloud, c_cloud, same=True, re_ind = True)  # (1, 64, 500)
+        dens_feat_c = self.feat2(c_cloud.transpose(2, 1), c_img)
+        '''
+        Local Difference
+        '''
+
+        for i in range(len(his_clouds) - 1):
+            # indv = len(his_clouds) - i - 1
+            indv = i + 1
+            if i == 0:
+                dens_feat_f = self.feat2(his_clouds[indv - 1].transpose(2, 1), his_imgs[indv - 1])
+            dens_feat_s = self.feat2(his_clouds[indv].transpose(2, 1), his_imgs[indv])  # (1, 160, 500)
+            
+            '''
+            Global Difference
+            '''
+            dens_feat_c = self.p3d_global( c_img, c_cloud, his_imgs[i], his_clouds[i], dens_feat_c, dens_feat_f)
+
+            dens_feat_f = self.sm2(self.p3d_local(his_imgs[indv], his_clouds[indv], his_imgs[indv - 1], his_clouds[indv - 1], dens_feat_s, dens_feat_f))
+
+        '''
+        Global Difference
+        '''
+        dens_feat_c = self.p3d_global(c_img, c_cloud, his_imgs[len(his_clouds)-1], his_clouds[len(his_clouds)-1],  dens_feat_c, dens_feat_f)
+
+        '''
+        Local Difference
+        '''
+
+        dens_feat_f = self.sm2(self.p3d_local(c_img, c_cloud, his_imgs[len(his_clouds)-1], his_clouds[len(his_clouds)-1], dens_feat_c, dens_feat_f))
+
+        dens_feat = self.diff4(torch.cat((dens_feat_c, dens_feat_f), dim = 1)) # (1, 160, 500)
+        return dens_feat
 
 
     def forward(self, img, choose, x, anchor = None, scale = None, gt_t = None, re_img = False, his_feats = None):
@@ -158,7 +197,6 @@ class KeyNet(nn.Module):
         out_img = self.cnn(img)
 
         bs, di, _, _ = out_img.size()
-
         emb = out_img.view(bs, di, -1)
         choose = choose.repeat(1, di, 1)
         emb = torch.gather(emb, 2, choose).contiguous()
@@ -167,73 +205,8 @@ class KeyNet(nn.Module):
         if his_feats != None:
             c_img = emb
             c_cloud = x
-            his_imgs = his_feats[0].transpose(1, 0).contiguous() # (ms, bs, 32, 500)
-            his_clouds = his_feats[1]
-            '''
-            Global Difference
-            '''
-            featc, indexc, weic = self.p3d(c_img, c_cloud, c_cloud, same=True, re_ind = True)  # (1, 64, 500)
-            dens_feat_c = self.feat2(c_cloud.transpose(2, 1), c_img)
-            '''
-            Local Difference
-            '''
-
-            for i in range(len(his_clouds) - 1):
-                # indv = len(his_clouds) - i - 1
-                indv = i + 1
-                if i == 0:
-                    dens_feat_f = self.feat2(his_clouds[indv - 1].transpose(2, 1), his_imgs[indv - 1])
-                dens_feat_s = self.feat2(his_clouds[indv].transpose(2, 1), his_imgs[indv])  # (1, 160, 500)
-
-                feat, index, wei = self.p3d(his_imgs[indv], his_clouds[indv], his_clouds[indv], same=True, re_ind = True)
-                feat1, index1, wei1 = self.p3d(his_imgs[indv - 1], his_clouds[indv], his_clouds[indv - 1], re_ind = True)
-                feat2, index2, wei2 = self.p3d(his_imgs[indv], his_clouds[indv - 1], his_clouds[indv], re_ind = True)
-                dens_feat_f = self.po(feat, feat1, feat2, index, index1, index2, wei1, wei2, dens_feat_f, dens_feat_s)
-
-                # dens_feat_f = self.diff3(self.pp(self.pti(dens_feat_f, , wei2), dens_feat_s))  # (1, 160, 500)
-                '''
-                Global Difference
-                '''
-                dens_feat_t = self.feat2(his_clouds[i].transpose(2, 1), his_imgs[i])
-                feat1, index1, wei1 = self.p3d(his_imgs[i], c_cloud, his_clouds[i], re_ind=True)
-                feat2, index2, wei2 = self.p3d(c_img, his_clouds[i], c_cloud, re_ind = True)
-
-                if i == 0:
-                    sum = self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_t, dens_feat_c).unsqueeze(1)
-                    # sum = self.diff3(F.sigmoid(
-                    #     self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_t + dens_feat_c).unsqueeze(1) # (1, 160, 500)
-                else:
-                    sum = torch.cat((sum, self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_t, dens_feat_c).unsqueeze(1)), dim = 1)
-            '''
-            Global Difference
-            '''
-
-            dens_feat_t = self.feat2(his_clouds[len(his_clouds)-1].transpose(2, 1), his_imgs[len(his_clouds)-1])
-            feat1, index1, wei1 = self.p3d(his_imgs[len(his_clouds) - 1], c_cloud, his_clouds[len(his_clouds) - 1], re_ind = True)
-            feat2, index2, wei2 = self.p3d(c_img, his_clouds[len(his_clouds)-1], c_cloud, re_ind = True)
-
-
-            sum = torch.cat((sum, self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_t, dens_feat_c).unsqueeze(1)), dim=1)
-
-            '''
-            Local Difference
-            '''
-            # dens_feat = self.feat2(c_cloud.transpose(2, 1), c_img)
-            # featc = self.p3d(c_img, c_cloud, c_cloud, same=True)  # (1, 64, 500)\
-
-            feat1 ,index1, wei1= self.p3d(his_imgs[len(his_clouds) - 1], c_cloud, his_clouds[len(his_clouds) - 1], re_ind = True)
-            feat2, index2, wei2 = self.p3d(c_img, his_clouds[len(his_clouds)-1], c_cloud, re_ind = True)
-
-            dens_feat = self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_f, dens_feat_c)
-            # dens_feat = self.diff3(F.sigmoid(self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_f + dens_feat_c)  # (1, 160, 500)
-
-
-
-
-            sum = torch.sum(sum, dim = 1).view(1, self.c_f, 500)
-
-            dens_feat = self.diff4(torch.cat((sum, dens_feat), dim = 1)) # (1, 160, 500)
-
+            dens_feat = self.process_his(his_feats, c_img, c_cloud)
+        
         emb = emb.repeat(1, 1, num_anc).contiguous()
 
         output_anchor = anchor.view(1, num_anc, 3)
@@ -302,69 +275,7 @@ class KeyNet(nn.Module):
         if his_feats != None:
             c_img = emb
             c_cloud = ori_x
-            his_imgs = his_feats[0].transpose(1, 0).contiguous() # (ms, bs, 32, 500)
-            his_clouds = his_feats[1]
-            '''
-            Global Difference
-            '''
-            featc, indexc, weic = self.p3d(c_img, c_cloud, c_cloud, same=True, re_ind = True)  # (1, 64, 500)
-            dens_feat_c = self.feat2(c_cloud.transpose(2, 1), c_img)
-            '''
-            Local Difference
-            '''
-
-            for i in range(len(his_clouds) - 1):
-                # indv = len(his_clouds) - i - 1
-                indv = i + 1
-                if i == 0:
-                    dens_feat_f = self.feat2(his_clouds[indv - 1].transpose(2, 1), his_imgs[indv - 1])
-                dens_feat_s = self.feat2(his_clouds[indv].transpose(2, 1), his_imgs[indv])  # (1, 160, 500)
-
-                feat, index, wei = self.p3d(his_imgs[indv], his_clouds[indv], his_clouds[indv], same=True, re_ind = True)
-                feat1, index1, wei1 = self.p3d(his_imgs[indv - 1], his_clouds[indv], his_clouds[indv - 1], re_ind = True)
-                feat2, index2, wei2 = self.p3d(his_imgs[indv], his_clouds[indv - 1], his_clouds[indv], re_ind = True)
-                dens_feat_f = self.po(feat, feat1, feat2, index, index1, index2, wei1, wei2, dens_feat_f, dens_feat_s)
-
-                # dens_feat_f = self.diff3(self.pp(self.pti(dens_feat_f, , wei2), dens_feat_s))  # (1, 160, 500)
-                '''
-                Global Difference
-                '''
-                dens_feat_t = self.feat2(his_clouds[i].transpose(2, 1), his_imgs[i])
-                feat1, index1, wei1 = self.p3d(his_imgs[i], c_cloud, his_clouds[i], re_ind=True)
-                feat2, index2, wei2 = self.p3d(c_img, his_clouds[i], c_cloud, re_ind = True)
-
-                if i == 0:
-                    sum = self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_t, dens_feat_c).unsqueeze(1)
-                    # sum = self.diff3(F.sigmoid(
-                    #     self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_t + dens_feat_c).unsqueeze(1) # (1, 160, 500)
-                else:
-                    sum = torch.cat((sum, self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_t, dens_feat_c).unsqueeze(1)), dim = 1)
-            '''
-            Global Difference
-            '''
-
-            dens_feat_t = self.feat2(his_clouds[len(his_clouds)-1].transpose(2, 1), his_imgs[len(his_clouds)-1])
-            feat1, index1, wei1 = self.p3d(his_imgs[len(his_clouds) - 1], c_cloud, his_clouds[len(his_clouds) - 1], re_ind = True)
-            feat2, index2, wei2 = self.p3d(c_img, his_clouds[len(his_clouds)-1], c_cloud, re_ind = True)
-
-
-            sum = torch.cat((sum, self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_t, dens_feat_c).unsqueeze(1)), dim=1)
-
-            '''
-            Local Difference
-            '''
-            # dens_feat = self.feat2(c_cloud.transpose(2, 1), c_img)
-            # featc = self.p3d(c_img, c_cloud, c_cloud, same=True)  # (1, 64, 500)\
-
-            feat1 ,index1, wei1= self.p3d(his_imgs[len(his_clouds) - 1], c_cloud, his_clouds[len(his_clouds) - 1], re_ind = True)
-            feat2, index2, wei2 = self.p3d(c_img, his_clouds[len(his_clouds)-1], c_cloud, re_ind = True)
-
-            dens_feat = self.po(featc, feat1, feat2, indexc, index1, index2, wei1, wei2, dens_feat_f, dens_feat_c)
-            # dens_feat = self.diff3(F.sigmoid(self.diff1((featc - feat1 + featc - feat2) / 2.)) * dens_feat_f + dens_feat_c)  # (1, 160, 500)
-
-
-            sum = torch.sum(sum, dim = 1).view(1, self.c_f, 500)
-            dens_feat = self.diff4(torch.cat((sum, dens_feat), dim = 1)) # (1, 160, 500)
+            dens_feat = self.process_his(his_feats, c_img, c_cloud)
 
         emb = emb.repeat(1, 1, num_anc).detach()
 
