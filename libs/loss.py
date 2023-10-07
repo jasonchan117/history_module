@@ -123,7 +123,7 @@ class Loss(_Loss):
 
     def forward(self, Kp_fr, Kp_to, anc_fr, anc_to, att_fr, att_to, r_fr, t_fr, r_to, t_to, scale, cate):
 
-        if ((self.opt.dataset == 'nocs') and (cate - 1 in [2, 4, 5])) or (self.opt.dataset == 'movi' and cate in [3]):
+        if ((self.opt.dataset == 'nocs') and (cate - 1 in [2, 4, 5])) or (self.opt.dataset == 'movi' and cate not in [3]):
             sym_or_not = False
         else:
             sym_or_not = True
