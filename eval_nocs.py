@@ -14,6 +14,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 import cv2
 from torch.autograd import Variable
 # from dataset.movi_loader import Dataset
@@ -23,6 +24,7 @@ from libs.network import KeyNet
 from libs.old_network import KeyNet as kn
 from libs.loss import Loss
 from benchmark import benchmark
+from PIL import Image
 import copy
 
 parser = argparse.ArgumentParser()
@@ -46,7 +48,7 @@ parser.add_argument('--d_scale', default= 1000, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
 parser.add_argument('--real_data', action = 'store_true', help = 'Only use real data to train.')
-
+parser.add_argument('--eval', action = 'store_true', help = 'used for difference visual')
 opt = parser.parse_args()
 # model = kn(num_points=500, num_key=8, num_cates=6, opt = opt)
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
@@ -108,7 +110,7 @@ while(test_dataset.check_len()):
                 for ind, his in enumerate(test_dataset.fr_his):
                     img_feat = model.eval_forward(test_dataset.fr_his[ind], test_dataset.choose_his[ind],
                                                   test_dataset.cloud_his[ind], None, None, 0.0, re_img=True, first=False)
-
+                    
                     if ind == 0:
                         feats = img_feat.unsqueeze(1)
                     else:
@@ -160,6 +162,41 @@ while(test_dataset.check_len()):
                 feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
         Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
                                            his_feats=[feats, test_dataset.cloud_his])
+        
+        if opt.eval == True:
+            m_proj = np.array([[591.01250, 0., 322.52500 ],[0., 590.16775, 244.11084], [0.,0.,1.]])
+            dist = model.distance # (1, 500)
+            dist = dist.repeat(500, 1).unsqueeze(2)
+
+            dist = (dist - torch.min(dist) )/ (torch.max(dist) - torch.min(dist)) * 255
+            dist = dist.cpu().detach().numpy().astype(np.uint8)
+
+            dist = cv2.applyColorMap(dist, cv2. COLORMAP_JET)
+
+
+            cl_pre = test_dataset.cloud_his[-1][0].detach().cpu()
+
+            cl_pre = (test_dataset.times_scale(scale.cpu().squeeze(0).numpy(), cl_pre * 1000. ) @ current_r.T + current_t).cpu().numpy()
+            cam_bb3d = cl_pre
+            cam_bb3d[:, 0] *=-1
+            cam_bb3d[:, 1] *=-1
+            cam_bb3d = (m_proj @ cam_bb3d.transpose()).transpose()
+            cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
+            cam_bb3d = cam_bb3d.astype(np.int)
+            cam_bb3d = cam_bb3d[:, 0:2]
+            cl_pre = cam_bb3d
+
+            choose_obj = test_dataset.real_obj_name_list[test_dataset.cate_id][test_dataset.obj_index]
+            choose_frame = test_dataset.real_obj_list[test_dataset.cate_id][choose_obj][test_dataset.index - 1]
+            im_pre = cv2.imread('{0}_color.png'.format(choose_frame))
+
+            for index ,point in enumerate(cl_pre):
+                cv2.circle(im_pre, point, 2, (int(dist[0][index][0]), int(dist[0][index][1]), int(dist[0][index][2])), 2)
+            
+            cv2.imshow('img', im_pre)
+            cv2.waitKey(0)
+
+
 
 #################################
 
@@ -198,6 +235,41 @@ while(test_dataset.check_len()):
                     feats = torch.cat((feats, img_feat.unsqueeze(1)), dim = 1)
 
             Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False, his_feats=[feats, test_dataset.cloud_his])
+
+        if opt.eval == True:
+            m_proj = np.array([[591.01250, 0., 322.52500 ],[0., 590.16775, 244.11084], [0.,0.,1.]])
+            dist = model.distance # (1, 500)
+            # dist = F.softmax(dist, dim = -1).cpu().detach().numpy()[0]
+            # dist = dist.cpu().detach().numpy()[0] - 1  .cpu().detach().numpy()
+            dist = dist.repeat(500, 1).unsqueeze(2)
+
+            dist = (dist - torch.min(dist) )/ (torch.max(dist) - torch.min(dist)) * 255
+            dist = dist.cpu().detach().numpy().astype(np.uint8)
+
+            dist = cv2.applyColorMap(dist, cv2. COLORMAP_JET)
+
+
+            cl_pre = test_dataset.cloud_his[-1][0].detach().cpu()
+
+            cl_pre = (test_dataset.times_scale(scale.cpu().squeeze(0).numpy(), cl_pre * 1000. ) @ current_r.T + current_t).cpu().numpy()
+            cam_bb3d = cl_pre
+            cam_bb3d[:, 0] *=-1
+            cam_bb3d[:, 1] *=-1
+            cam_bb3d = (m_proj @ cam_bb3d.transpose()).transpose()
+            cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
+            cam_bb3d = cam_bb3d.astype(np.int)
+            cam_bb3d = cam_bb3d[:, 0:2]
+            cl_pre = cam_bb3d
+
+            choose_obj = test_dataset.real_obj_name_list[test_dataset.cate_id][test_dataset.obj_index]
+            choose_frame = test_dataset.real_obj_list[test_dataset.cate_id][choose_obj][test_dataset.index - 1]
+            im_pre = cv2.imread('{0}_color.png'.format(choose_frame))
+
+            for index ,point in enumerate(cl_pre):
+                cv2.circle(im_pre, point, 2, (int(dist[0][index][0]), int(dist[0][index][1]), int(dist[0][index][2])), 2)
+            
+            cv2.imshow('img', im_pre)
+            cv2.waitKey(0)
 
         min_dis = 1000
         lenggth = len(Kp_to)

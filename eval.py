@@ -14,6 +14,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import matplotlib.pyplot as plt
+import cv2 as cv
 import cv2
 from torch.autograd import Variable
 # from dataset.movi_loader import Dataset
@@ -43,6 +44,7 @@ parser.add_argument('--memory_size', default=0, type = int)
 parser.add_argument('--d_scale', default= 10, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
+parser.add_argument('--eval', action = 'store_true', help = 'used for difference visual')
 opt = parser.parse_args()
 
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
@@ -98,6 +100,40 @@ while(test_dataset.current_video_num <= opt.video_num):
                 feats = torch.cat((feats, img_feat.unsqueeze(1)), dim=1)
         Kp_fr, att_fr = model.eval_forward(img, choose, cloud, anchor, scale, 0.0, first=False,
                                            his_feats=[feats, test_dataset.cloud_his])
+        
+        if opt.eval == True:
+            m_proj = np.array([[-280, 0., 127.5 ],[0., 280, 127.5], [0.,0.,1.]])
+            dist = model.distance # (1, 500)
+            # dist = F.softmax(dist, dim = -1).cpu().detach().numpy()[0]
+            # dist = dist.cpu().detach().numpy()[0] - 1  .cpu().detach().numpy()
+            dist = dist.repeat(500, 1).unsqueeze(2)
+
+            dist = (dist - torch.min(dist) )/ (torch.max(dist) - torch.min(dist)) * 255
+            dist = dist.cpu().detach().numpy().astype(np.uint8)
+
+            dist = cv2.applyColorMap(dist, cv2. COLORMAP_JET)
+
+
+            cl_pre = test_dataset.cloud_his[-1][0].detach().cpu()
+
+            cl_pre = (test_dataset.times_scale(scale.cpu().squeeze(0).numpy(), cl_pre * 10. ) @ current_r.T + current_t).cpu().numpy()
+            cam_bb3d = cl_pre
+
+            cam_bb3d = (m_proj @ cam_bb3d.transpose()).transpose()
+            cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
+            cam_bb3d = cam_bb3d.astype(np.int)
+            cam_bb3d = cam_bb3d[:, 0:2]
+            cl_pre = cam_bb3d
+            ind = test_dataset.index
+            vp = test_dataset.video_path
+
+            im_pre = cv2.imread(os.path.join(vp, 'rgb_' + str(ind - 1) + '.png'))
+
+            for index ,point in enumerate(cl_pre):
+                cv2.circle(im_pre, point, 1, (int(dist[0][index][0]), int(dist[0][index][1]), int(dist[0][index][2])), 1)
+            
+            cv2.imshow('img', im_pre)
+            cv2.waitKey(0)
         cloud_temp = torch.from_numpy(  (test_dataset.times_scale(test_dataset.basis_scale ,( cloud.cpu().squeeze(0).numpy() * test_dataset.dis_scale)) @ test_dataset.basis_rt[0].T + test_dataset.basis_rt[1] ).astype(np.float32)).unsqueeze(0).cuda()
         test_dataset.update_sequence(img, choose, cloud_temp, scale.cpu().squeeze(0).numpy(), gt_r, gt_t)
 
@@ -114,6 +150,7 @@ while(test_dataset.current_video_num <= opt.video_num):
             img, choose, cloud, anchor, scale, gt_r, gt_t, bb3d = test_dataset.get_next(current_r, current_t)
             img, choose, cloud, anchor, scale = img.cuda(), choose.cuda(), cloud.cuda(), anchor.cuda(), scale.cuda()
         except:
+            print('error2')
             continue
         test_dataset.basis_rt = [current_r, current_t]
         test_dataset.basis_scale = scale.cpu().squeeze(0).numpy()
@@ -130,6 +167,39 @@ while(test_dataset.current_video_num <= opt.video_num):
                     feats = torch.cat((feats, img_feat.unsqueeze(1)), dim = 1)
 
             Kp_to, att_to = model.eval_forward(img, choose, cloud, anchor, scale, min_dis, first=False, his_feats=[feats, test_dataset.cloud_his])
+        if opt.eval == True:
+            m_proj = np.array([[-280, 0., 127.5 ],[0., 280, 127.5], [0.,0.,1.]])
+            dist = model.distance # (1, 500)
+            # dist = F.softmax(dist, dim = -1).cpu().detach().numpy()[0]
+            # dist = dist.cpu().detach().numpy()[0] - 1  .cpu().detach().numpy()
+            dist = dist.repeat(500, 1).unsqueeze(2)
+
+            dist = (dist - torch.min(dist) )/ (torch.max(dist) - torch.min(dist)) * 255
+            dist = dist.cpu().detach().numpy().astype(np.uint8)
+
+            dist = cv2.applyColorMap(dist, cv2. COLORMAP_JET)
+
+
+            cl_pre = test_dataset.cloud_his[-1][0].detach().cpu()
+
+            cl_pre = (test_dataset.times_scale(scale.cpu().squeeze(0).numpy(), cl_pre * 10. ) @ current_r.T + current_t).cpu().numpy()
+            cam_bb3d = cl_pre
+
+            cam_bb3d = (m_proj @ cam_bb3d.transpose()).transpose()
+            cam_bb3d = ((1 / cam_bb3d[:, 2]) * cam_bb3d.transpose()).transpose()
+            cam_bb3d = cam_bb3d.astype(np.int)
+            cam_bb3d = cam_bb3d[:, 0:2]
+            cl_pre = cam_bb3d
+            ind = test_dataset.index
+            vp = test_dataset.video_path
+
+            im_pre = cv2.imread(os.path.join(vp, 'rgb_' + str(ind - 1) + '.png'))
+
+            for index ,point in enumerate(cl_pre):
+                cv2.circle(im_pre, point, 1, (int(dist[0][index][0]), int(dist[0][index][1]), int(dist[0][index][2])), 1)
+            
+            cv2.imshow('img', im_pre)
+            cv2.waitKey(0)
 
         min_dis = 1000
         lenggth = len(Kp_to)
