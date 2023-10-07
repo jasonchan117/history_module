@@ -162,6 +162,9 @@ class KeyNet(nn.Module):
         '''
         Local Difference
         '''
+        if self.opt.eval == True:
+            self.gl_diff = []
+            self.lo_diff = []
 
         for i in range(len(his_clouds) - 1):
             # indv = len(his_clouds) - i - 1
@@ -170,13 +173,21 @@ class KeyNet(nn.Module):
                 dens_feat_f = self.feat2(his_clouds[indv - 1].transpose(2, 1), his_imgs[indv - 1])
             dens_feat_s = self.feat2(his_clouds[indv].transpose(2, 1), his_imgs[indv])  # (1, 160, 500)
             
+            # distance = torch.cosine_similarity(dens_feat_s, dens_feat_f)
+
             '''
             Global Difference
             '''
+
             dens_feat_c = self.p3d_global( c_img, c_cloud, his_imgs[i], his_clouds[i], dens_feat_c, dens_feat_f)
 
-            dens_feat_f = self.sm2(self.p3d_local(his_imgs[indv], his_clouds[indv], his_imgs[indv - 1], his_clouds[indv - 1], dens_feat_s, dens_feat_f))
+            ##############################################
 
+            dens_feat_f = self.sm2(self.p3d_local(his_imgs[indv], his_clouds[indv], his_imgs[indv - 1], his_clouds[indv - 1], dens_feat_s, dens_feat_f))
+            # dens_feat_f = self.p3d_local(his_imgs[indv], his_clouds[indv], his_imgs[indv - 1], his_clouds[indv - 1], dens_feat_s, dens_feat_f)
+            if self.opt.eval == True:
+                self.gl_diff.append(self.p3d_global.distance)
+                self.lo_diff.append(self.p3d_local.distance)
         '''
         Global Difference
         '''
@@ -187,7 +198,7 @@ class KeyNet(nn.Module):
         '''
 
         dens_feat_f = self.sm2(self.p3d_local(c_img, c_cloud, his_imgs[len(his_clouds)-1], his_clouds[len(his_clouds)-1], dens_feat_c, dens_feat_f))
-
+        self.distance = self.p3d_local.distance
         dens_feat = self.diff4(torch.cat((dens_feat_c, dens_feat_f), dim = 1)) # (1, 160, 500)
         return dens_feat
 

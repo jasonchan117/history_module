@@ -382,6 +382,7 @@ class Nocs(data.Dataset):
         return ans_r, ans_t, ans_idx
 
     def get_frame(self, choose_frame, choose_obj, syn_or_real, cur_r = None, cur_t = None ,eval = False):
+        
         if syn_or_real:
             mesh_bbox = []
             input_file = open('{0}/model_pts/{1}.txt'.format(self.root, choose_obj), 'r')
@@ -408,6 +409,7 @@ class Nocs(data.Dataset):
             mesh_bbox = self.enlarge_bbox(copy.deepcopy(mesh_bbox))
 
         img = Image.open('{0}_color.png'.format(choose_frame))
+        self.ori_img =  np.array(img.copy())
         depth = np.array(self.load_depth('{0}_depth.png'.format(choose_frame)))
 
         target_r, target_t, idx = self.get_pose(choose_frame, choose_obj)

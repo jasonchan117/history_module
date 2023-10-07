@@ -51,6 +51,7 @@ parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the p
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
 parser.add_argument('--real_data', action = 'store_true', help = 'Only use real data to train.')
 parser.add_argument('--overlap_seq', action = 'store_true', help = 'Use overlap seq or not')
+parser.add_argument('--eval', action = 'store_true', help = 'used for difference visual')
 opt = parser.parse_args()
 cates = ["Action Figures", "Bag", "Board Games", "Bottles and Cans and Cups", "Camera", "Car Seat", "Consumer Goods", "Hat", "Headphones", "Keyboard", "Legos", "Media Cases", "Mouse", "None", "Shoe", "Stuffed Toys", "Toys"]
 # python train.py --memory_size 5 --outf ckpt/Shoe/diff_randomRT_bugfixed_mask/ --lr 0.000001 --resume ckpt/Shoe/diff_randomRT_bugfixed_mask/model_27_0.24112658077478408_Shoe.pth --mask --score 0.24112658077478408 --begin 28 --epoch 300

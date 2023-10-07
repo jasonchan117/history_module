@@ -166,7 +166,7 @@ class Pseudo3DConv(nn.Module):
         # current_feat = current_feat * fuse_c_t * distance + current_feat * (~distance)
         target_feat = target_feat * fuse_t_c 
 
-        
+        # print(fuse_t_c.transpose(2, 1)[0][0])
 
         inds_pp = inds_pp.transpose(2, 1).contiguous() 
         
@@ -196,7 +196,7 @@ class Pseudo3DConv(nn.Module):
 
 
         ######################### Points features ###################
-        
+        # self.pt = cloud.copy()
         cloud = cloud.transpose(2, 1).contiguous() #(1, 3, numpt)
         cloud_feat = self.pconv1(cloud)
         cloud_feat = self.pconv2(F.leaky_relu(cloud_feat)) #(1, 128, numpt)
@@ -254,7 +254,10 @@ class Pseudo3DConv(nn.Module):
 
         img_diff = img_feat - selected_img_tar_feat # 1, 128, 500
         cloud_diff = cloud_feat - selected_points_tar_feat
- 
+        distance = torch.cosine_similarity(cloud_feat, selected_points_tar_feat) #1, 500
+        distance *= torch.norm(cloud_diff, dim = 1).view(1, 500)
+        
+        self.distance = distance
 
         ########################## Bidirectional difference fusion #############
 

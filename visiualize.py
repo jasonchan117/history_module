@@ -16,8 +16,9 @@ import torchvision.utils as vutils
 import matplotlib.pyplot as plt
 import cv2
 from torch.autograd import Variable
-from dataset.movi_loader import Dataset
 
+from dataset.movi_loader import Dataset as Movi
+from dataset.nocs_loader import Nocs
 from libs.network import KeyNet
 from libs.loss import Loss
 from benchmark import benchmark
@@ -25,12 +26,12 @@ import copy
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type = str, default = '6pack', help = 'models from [6pack]')
-parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, ycb]')
+parser.add_argument('--dataset', type = str, default = 'movi', help = 'dataset from [movi, nocs]')
 parser.add_argument('--dataset_root', type=str, default = '/media/lang/My Passport/Dataset/MOvi', help='dataset root dir')
 parser.add_argument('--resume', type=str, default = '',  help='resume model')
 parser.add_argument('--category', type=int, default = 14,  help='category to train')
 parser.add_argument('--num_pt', type=int, default = 500, help='points')
-parser.add_argument('--workers', type=int, default = 30, help='number of data loading workers')
+parser.add_argument('--workers', type=int, default = 4, help='number of data loading workers')
 parser.add_argument('--num_kp', type=int, default = 8, help='number of kp')
 parser.add_argument('--outf', type=str, default = 'diff_randomRT_0_3/', help='save dir')
 parser.add_argument('--occlude', action= 'store_true')
@@ -45,16 +46,19 @@ parser.add_argument('--d_scale', default= 10, type = float)
 parser.add_argument('--mask', action = 'store_true', help = 'Using mask in the points sampled.')
 parser.add_argument('--debug', action = 'store_true', help = 'help debug')
 parser.add_argument('--obj', default= -1, type  = int)
-m_proj = np.array([[-280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]])
 opt = parser.parse_args()
+opt.d_scale = 10. if opt.dataset == 'movi' else 1000.
+m_proj = np.array([[-280., 0., 127.5],[0., 280., 127.5], [0.,0.,1.]]) if opt.dataset == 'movi' else np.array([[591.01250, 0., 322.52500 ],[0., 590.16775, 244.11084], [0.,0.,1.]])
+
 model = KeyNet(opt, num_points = opt.num_pt, num_key = opt.num_kp)
 model = model.float()
 model.cuda()
 model.eval()
 model.load_state_dict(torch.load(opt.resume))
-test_dataset = Dataset(opt, mode = 'test', length = 5000, eval = True)
+test_dataset = Movi(opt, mode = 'test', length = 5000, eval = True) if opt.dataset == 'movi' else Nocs(opt, mode = 'test', length = 5000, eval = True)
+
 test_dataset.next_video(opt.v_id)
-criterion = Loss(opt.num_kp)
+criterion = Loss(opt.num_kp, opt)
 
 if opt.obj != -1:
     test_dataset.obj_index = opt.obj
@@ -105,7 +109,7 @@ else:
 
 min_dis = 0.0005
 while (True):
-    print('Video index:', test_dataset.current_video_num, 'Frame index:', test_dataset.index)
+    print('Video index:', test_dataset.current_video_num, 'Frame index:', test_dataset.index, 'obj:' test_dataset.obj_index)
     '''
     Per frame in the video.
     '''
